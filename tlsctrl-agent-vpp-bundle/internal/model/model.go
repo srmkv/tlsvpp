@@ -2,6 +2,14 @@ package model
 
 import "time"
 
+type NetworkInterface struct {
+	Name      string   `json:"name"`
+	MTU       int      `json:"mtu"`
+	MAC       string   `json:"mac"`
+	Flags     []string `json:"flags"`
+	Addresses []string `json:"addresses"`
+}
+
 type User struct {
 	Username   string    `json:"username"`
 	CertSerial string    `json:"cert_serial"`
@@ -13,19 +21,21 @@ type User struct {
 }
 
 type Session struct {
-	Username     string    `json:"username"`
-	CertSerial   string    `json:"cert_serial"`
-	SystemUser   string    `json:"system_user"`
-	OSName       string    `json:"os_name"`
-	OSVersion    string    `json:"os_version"`
-	SystemUptime string    `json:"system_uptime"`
-	IP           string    `json:"ip"`
-	MAC          string    `json:"mac"`
-	Source       string    `json:"source"`
-	Connected    bool      `json:"connected"`
-	ConnectedAt  time.Time `json:"connected_at"`
-	LastSeen     time.Time `json:"last_seen"`
-	AppsCount    int       `json:"apps_count"`
+	Username      string             `json:"username"`
+	CertSerial    string             `json:"cert_serial"`
+	SystemUser    string             `json:"system_user"`
+	OSName        string             `json:"os_name"`
+	OSVersion     string             `json:"os_version"`
+	SystemUptime  string             `json:"system_uptime"`
+	IP            string             `json:"ip"`
+	MAC           string             `json:"mac"`
+	Source        string             `json:"source"`
+	Interfaces    []NetworkInterface `json:"interfaces,omitempty"`
+	Connected     bool               `json:"connected"`
+	ConnectedAt   time.Time          `json:"connected_at"`
+	LastSeen      time.Time          `json:"last_seen"`
+	AppsCount     int                `json:"apps_count"`
+	AppsUpdatedAt time.Time          `json:"apps_updated_at"`
 }
 
 type AppInfo struct {
@@ -37,19 +47,37 @@ type AppInfo struct {
 }
 
 type Command struct {
-	Type    string `json:"type"`
-	Payload string `json:"payload"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	CreatedAt time.Time      `json:"created_at"`
+	Payload   map[string]any `json:"payload,omitempty"`
+}
+
+type AppsSnapshot struct {
+	Username    string    `json:"username"`
+	CommandID   string    `json:"command_id,omitempty"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Apps        []AppInfo `json:"apps"`
+}
+
+type AppsView struct {
+	Username string        `json:"username"`
+	Pending  bool          `json:"pending"`
+	Command  *Command      `json:"command,omitempty"`
+	Report   *AppsSnapshot `json:"report,omitempty"`
 }
 
 type ClientHeartbeat struct {
-	Username     string `json:"username"`
-	CertSerial   string `json:"cert_serial"`
-	SystemUser   string `json:"system_user"`
-	OSName       string `json:"os_name"`
-	OSVersion    string `json:"os_version"`
-	SystemUptime string `json:"system_uptime"`
-	IP           string `json:"ip"`
-	MAC          string `json:"mac"`
-	Source       string `json:"source"`
-	MTLSVerified bool   `json:"mtls_verified"`
+	Username      string             `json:"username"`
+	CertSerial    string             `json:"cert_serial"`
+	SystemUser    string             `json:"system_user"`
+	OSName        string             `json:"os_name"`
+	OSVersion     string             `json:"os_version"`
+	SystemUptime  string             `json:"system_uptime"`
+	IP            string             `json:"ip"`
+	MAC           string             `json:"mac"`
+	Source        string             `json:"source"`
+	Interfaces    []NetworkInterface `json:"interfaces,omitempty"`
+	ConnectIntent string             `json:"connect_intent,omitempty"`
+	MTLSVerified  bool               `json:"mtls_verified"`
 }

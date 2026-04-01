@@ -2,6 +2,7 @@ package vppclient
 
 import (
 	"context"
+	"time"
 
 	"github.com/srmkv/tlsctrl-agent/internal/model"
 )
@@ -16,8 +17,11 @@ type Client interface {
 
 	DisconnectSession(ctx context.Context, username string) error
 	ClientHeartbeat(ctx context.Context, hb model.ClientHeartbeat) error
-	SetClientApps(ctx context.Context, username string, apps []model.AppInfo) error
+
+	SetClientApps(ctx context.Context, username string, commandID string, generatedAt time.Time, apps []model.AppInfo) error
+	GetApps(ctx context.Context, username string) (model.AppsSnapshot, error)
 
 	SetCommand(ctx context.Context, username string, cmd model.Command) error
 	GetCommand(ctx context.Context, username string) (model.Command, error)
+	SetListenerConfig(ctx context.Context, listenAddr string, listenPort int, serverCertPEM, serverKeyPEM, caCertPEM string) error
 }

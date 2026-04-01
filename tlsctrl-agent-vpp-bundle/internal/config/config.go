@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
 	AdminListenAddr   string
-	ClientListenAddr  string
 	Backend           string
 	VPPAPISocket      string
 	RequireVPP        bool
@@ -17,6 +17,11 @@ type Config struct {
 	PublicHost        string
 	ClientPublicURL   string
 	RequireClientCert bool
+	PluginListenAddr  string
+	PluginListenPort  int
+	VerboseLogging    bool
+	HTTPAccessLog     bool
+	GovPPTimeout      time.Duration
 }
 
 func envOr(key, fallback string) string {
@@ -25,7 +30,6 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
-
 func envBool(key string, fallback bool) bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	if v == "" {
@@ -33,11 +37,22 @@ func envBool(key string, fallback bool) bool {
 	}
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
+func envInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	var out int
+	_, err := fmt.Sscanf(v, "%d", &out)
+	if err != nil || out <= 0 {
+		return fallback
+	}
+	return out
+}
 
 func Load() Config {
 	return Config{
 		AdminListenAddr:   envOr("TLSCTRL_ADMIN_LISTEN_ADDR", ":9080"),
-		ClientListenAddr:  envOr("TLSCTRL_CLIENT_LISTEN_ADDR", ":9443"),
 		Backend:           envOr("TLSCTRL_BACKEND", "memory"),
 		VPPAPISocket:      envOr("TLSCTRL_VPP_API_SOCKET", "/run/vpp/api.sock"),
 		RequireVPP:        envBool("TLSCTRL_REQUIRE_VPP", true),
@@ -46,6 +61,11 @@ func Load() Config {
 		PublicHost:        envOr("TLSCTRL_PUBLIC_HOST", "127.0.0.1"),
 		ClientPublicURL:   strings.TrimSpace(os.Getenv("TLSCTRL_CLIENT_PUBLIC_URL")),
 		RequireClientCert: envBool("TLSCTRL_REQUIRE_CLIENT_CERT", true),
+		PluginListenAddr:  envOr("TLSCTRL_PLUGIN_LISTEN_ADDR", "0.0.0.0"),
+		PluginListenPort:  envInt("TLSCTRL_PLUGIN_LISTEN_PORT", 9443),
+		VerboseLogging:    envBool("TLSCTRL_VERBOSE_LOGGING", true),
+		HTTPAccessLog:     envBool("TLSCTRL_HTTP_ACCESS_LOG", true),
+		GovPPTimeout:      time.Duration(envInt("TLSCTRL_GOVPP_TIMEOUT_SECONDS", 5)) * time.Second,
 	}
 }
 
@@ -53,20 +73,5 @@ func (c Config) DefaultClientURL() string {
 	if strings.TrimSpace(c.ClientPublicURL) != "" {
 		return strings.TrimRight(c.ClientPublicURL, "/")
 	}
-	addr := strings.TrimSpace(c.ClientListenAddr)
-	host := strings.TrimSpace(c.PublicHost)
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	if strings.HasPrefix(addr, ":") {
-		return fmt.Sprintf("https://%s%s", host, addr)
-	}
-	if strings.HasPrefix(addr, "0.0.0.0:") {
-		parts := strings.SplitN(addr, ":", 2)
-		return fmt.Sprintf("https://%s:%s", host, parts[1])
-	}
-	if strings.Contains(addr, "://") {
-		return strings.TrimRight(addr, "/")
-	}
-	return "https://" + addr
+	return "https://" + c.PublicHost + ":9443"
 }

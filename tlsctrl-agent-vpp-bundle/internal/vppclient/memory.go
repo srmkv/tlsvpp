@@ -3,6 +3,8 @@ package vppclient
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -10,17 +12,21 @@ import (
 )
 
 type MemoryClient struct {
-	mu       sync.RWMutex
-	users    map[string]model.User
-	sessions map[string]model.Session
-	commands map[string]model.Command
+	mu           sync.RWMutex
+	users        map[string]model.User
+	sessions     map[string]model.Session
+	commands     map[string]model.Command
+	apps         map[string]model.AppsSnapshot
+	adminBlocked map[string]bool
 }
 
 func NewMemoryClient() *MemoryClient {
 	return &MemoryClient{
-		users:    make(map[string]model.User),
-		sessions: make(map[string]model.Session),
-		commands: make(map[string]model.Command),
+		users:        make(map[string]model.User),
+		sessions:     make(map[string]model.Session),
+		commands:     make(map[string]model.Command),
+		apps:         make(map[string]model.AppsSnapshot),
+		adminBlocked: make(map[string]bool),
 	}
 }
 
@@ -52,6 +58,8 @@ func (m *MemoryClient) DeleteUser(ctx context.Context, username string) error {
 	delete(m.users, username)
 	delete(m.sessions, username)
 	delete(m.commands, username)
+	delete(m.apps, username)
+	delete(m.adminBlocked, username)
 	return nil
 }
 
@@ -73,6 +81,7 @@ func (m *MemoryClient) ReissueUser(ctx context.Context, username, certSerial str
 		s.LastSeen = time.Now().UTC()
 		m.sessions[username] = s
 	}
+	delete(m.commands, username)
 	return nil
 }
 
@@ -83,6 +92,7 @@ func (m *MemoryClient) ListUsers(ctx context.Context) ([]model.User, error) {
 	for _, u := range m.users {
 		out = append(out, u)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
 	return out, nil
 }
 
@@ -93,19 +103,32 @@ func (m *MemoryClient) ListSessions(ctx context.Context) ([]model.Session, error
 	for _, s := range m.sessions {
 		out = append(out, s)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Connected != out[j].Connected {
+			return out[i].Connected
+		}
+		return out[i].Username < out[j].Username
+	})
 	return out, nil
 }
 
 func (m *MemoryClient) DisconnectSession(ctx context.Context, username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s, ok := m.sessions[username]
-	if !ok {
-		return nil
+
+	now := time.Now().UTC()
+	m.adminBlocked[username] = true
+	if s, ok := m.sessions[username]; ok {
+		s.Connected = false
+		s.LastSeen = now
+		m.sessions[username] = s
 	}
-	s.Connected = false
-	s.LastSeen = time.Now().UTC()
-	m.sessions[username] = s
+	m.commands[username] = model.Command{
+		ID:        fmt.Sprintf("disconnect-%d", now.UnixNano()),
+		Type:      "disconnect",
+		CreatedAt: now,
+		Payload:   map[string]any{"reason": "admin_disconnect"},
+	}
 	return nil
 }
 
@@ -129,6 +152,22 @@ func (m *MemoryClient) ClientHeartbeat(ctx context.Context, hb model.ClientHeart
 		return errors.New("certificate serial mismatch")
 	}
 
+	if m.adminBlocked[hb.Username] {
+		if hb.ConnectIntent == "manual_connect" {
+			delete(m.adminBlocked, hb.Username)
+			if cmd, ok := m.commands[hb.Username]; ok && cmd.Type == "disconnect" {
+				delete(m.commands, hb.Username)
+			}
+		} else {
+			if s, ok := m.sessions[hb.Username]; ok {
+				s.Connected = false
+				s.LastSeen = time.Now().UTC()
+				m.sessions[hb.Username] = s
+			}
+			return errors.New("disconnected by admin")
+		}
+	}
+
 	now := time.Now().UTC()
 	u.LastSeen = now
 	m.users[hb.Username] = u
@@ -146,20 +185,50 @@ func (m *MemoryClient) ClientHeartbeat(ctx context.Context, hb model.ClientHeart
 	s.IP = hb.IP
 	s.MAC = hb.MAC
 	s.Source = hb.Source
+	s.Interfaces = append([]model.NetworkInterface(nil), hb.Interfaces...)
 	s.Connected = true
 	s.LastSeen = now
+	if snap, ok := m.apps[hb.Username]; ok {
+		s.AppsCount = len(snap.Apps)
+		s.AppsUpdatedAt = snap.GeneratedAt
+	}
 	m.sessions[hb.Username] = s
 	return nil
 }
 
-func (m *MemoryClient) SetClientApps(ctx context.Context, username string, apps []model.AppInfo) error {
+func (m *MemoryClient) SetClientApps(ctx context.Context, username string, commandID string, generatedAt time.Time, apps []model.AppInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+	snap := model.AppsSnapshot{
+		Username:    username,
+		CommandID:   commandID,
+		GeneratedAt: generatedAt,
+		Apps:        append([]model.AppInfo(nil), apps...),
+	}
+	m.apps[username] = snap
+
 	s := m.sessions[username]
 	s.Username = username
 	s.AppsCount = len(apps)
+	s.AppsUpdatedAt = generatedAt
 	m.sessions[username] = s
+
+	if cmd, ok := m.commands[username]; ok {
+		if commandID == "" || cmd.ID == "" || commandID == cmd.ID {
+			delete(m.commands, username)
+		}
+	}
 	return nil
+}
+
+func (m *MemoryClient) GetApps(ctx context.Context, username string) (model.AppsSnapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.apps[username], nil
 }
 
 func (m *MemoryClient) SetCommand(ctx context.Context, username string, cmd model.Command) error {
@@ -175,7 +244,6 @@ func (m *MemoryClient) GetCommand(ctx context.Context, username string) (model.C
 	return m.commands[username], nil
 }
 
-
 func (m *MemoryClient) ForceDisconnectAll(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -185,5 +253,9 @@ func (m *MemoryClient) ForceDisconnectAll(ctx context.Context) error {
 		s.LastSeen = now
 		m.sessions[username] = s
 	}
+	return nil
+}
+
+func (m *MemoryClient) SetListenerConfig(ctx context.Context, listenAddr string, listenPort int, serverCertPEM, serverKeyPEM, caCertPEM string) error {
 	return nil
 }
