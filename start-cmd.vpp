@@ -1,10 +1,13 @@
-lcp lcp-sync on
-lcp lcp-auto-subint on
+#lcp lcp-sync on
+#lcp lcp-auto-subint on
 set interface state eth0 up
 set interface state eth1 up
 set interface mtu packet 1500 eth0
 set interface mtu packet 1500 eth1
-lcp create eth0 host-if eth0
-lcp create eth1 host-if eth1
+#lcp create eth0 host-if eth0
+#lcp create eth1 host-if eth1
 set interface ip address eth0 192.17.0.1/24
 set interface ip address eth1 192.168.0.241/24
+set interface mac address eth0 00:0c:29:46:f3:99
+set interface mac address eth1 00:0c:29:46:f3:a3
+ip route add 0.0.0.0/0 via 192.168.0.1
