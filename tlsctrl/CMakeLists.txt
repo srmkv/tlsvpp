@@ -6,12 +6,25 @@ add_vpp_plugin(tlsctrl
   tlsctrl_cli.c
   tlsctrl_app.c
   tlsctrl_api.c
+  tlsctrl_vpn.c
+  tlsctrl_vpn_api.c
+  tlsctrl_vpn_cli.c
+  tlsctrl_vpn_dp.c
+  tlsctrl_vpn_dp_cli.c
+  tlsctrl_vpn_frame.c
+  tlsctrl_vpn_frame_cli.c
+  tlsctrl_vpn_transport_cli.c
+  tlsctrl_vpn_transport.c
+  tlsctrl_vpn_stream.c
+  tlsctrl_vpn_stream_cli.c
 
   API_FILES
   tlsctrl.api
+  tlsctrl_vpn.api
 
   INSTALL_HEADERS
   tlsctrl.h
+  tlsctrl_vpn.h
 )
 
 if(TARGET tlsctrl_plugin)

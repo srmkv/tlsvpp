@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <tlsctrl/tlsctrl.h>
+#include <tlsctrl/tlsctrl_vpn.h>
 
 #include <string.h>
 #include <vpp/app/version.h>
@@ -325,6 +326,7 @@ tlsctrl_init (vlib_main_t *vm)
   tm->tls_engine = CRYPTO_ENGINE_OPENSSL;
   clib_spinlock_init (&tm->clients_lock);
   tlsctrl_reset_counters ();
+  tlsctrl_vpn_init (vm);
   return 0;
 }
 
