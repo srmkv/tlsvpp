@@ -77,20 +77,21 @@ function pill(kind, text) {
   const cls = kind === 'ok' ? 'pillOk' : kind === 'warn' ? 'pillWarn' : kind === 'info' ? 'pillInfo' : kind === 'mute' ? 'pillMute' : 'pillBad';
   return `<span class="pill ${cls}">${esc(text)}</span>`;
 }
-function accountBadge(row) { return row.enabled ? pill('ok', 'Учётка включена') : pill('bad', 'Учётка выключена'); }
+function stateIcon(kind, label, title) { return `<span class="stateDot ${kind}" title="${esc(title || label)}">${esc(label)}</span>`; }
+function accountBadge(row) { return row.enabled ? stateIcon('stateOn', '✓', 'Учётка включена') : stateIcon('stateBad', '×', 'Учётка выключена'); }
 function sessionBadge(row) {
-  if (row.connected) return pill('ok', 'Agent session активна');
+  if (row.connected) return stateIcon('stateOn', 'A', 'Agent session активна');
   const reasons = getReasonStore();
-  if (reasons[row.username] === 'admin_disconnect') return pill('warn', 'Отключено сервером');
-  return pill('mute', 'Agent session нет');
+  if (reasons[row.username] === 'admin_disconnect') return stateIcon('stateWarn', 'A', 'Agent session отключена сервером');
+  return stateIcon('stateOff', 'A', 'Agent session неактивна');
 }
 function profileBadge(row) {
-  if (row.profile) return pill('info', `Профиль: ${row.profile}`);
-  return pill('warn', 'Профиль не назначен');
+  if (row.profile) return stateIcon('stateInfo', 'P', `Профиль: ${row.profile}`);
+  return stateIcon('stateWarn', 'P', 'Профиль не назначен');
 }
 function runtimeHintBadge(row) {
-  if (row.connected) return pill('info', 'Runtime: по agent session');
-  return pill('mute', 'Runtime: bind в plugin отдельно');
+  if (row.connected) return stateIcon('stateInfo', 'R', 'Runtime активен по agent session');
+  return stateIcon('stateOff', 'R', 'Runtime не подтверждён agent session');
 }
 async function jget(path) {
   const r = await fetch(normalizeBase(API_BASE) + path, { cache: 'no-store' });
@@ -250,7 +251,7 @@ function renderUsers() {
   }
   tbody.innerHTML = rows.map((r) => (
     '<tr>' +
-      `<td><div class="badgeRow">${accountBadge(r)}${sessionBadge(r)}${profileBadge(r)}${runtimeHintBadge(r)}</div></td>` +
+      `<td><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${profileBadge(r)}${runtimeHintBadge(r)}</div></td>` +
       `<td>${esc(r.username)}</td>` +
       `<td>${esc(r.profile || '—')}</td>` +
       `<td class="mono">${esc(r.ip)}</td>` +
@@ -297,7 +298,7 @@ function openInfo(username) {
   const row = mergedRows().find(x => x.username === username);
   if (!row) return;
   byId('infoUsername').textContent = row.username || '—';
-  byId('infoStatus').innerHTML = `<div class="badgeRow">${accountBadge(row)}${sessionBadge(row)}${profileBadge(row)}${runtimeHintBadge(row)}</div>`;
+  byId('infoStatus').innerHTML = `<div class="statusIcons">${accountBadge(row)}${sessionBadge(row)}${profileBadge(row)}${runtimeHintBadge(row)}</div>`;
   byId('infoIP').textContent = row.ip || '—';
   byId('infoMAC').textContent = row.mac || '—';
   byId('infoSystemUser').textContent = row.system_user || '—';
@@ -499,14 +500,30 @@ async function loadAppsView(username) {
   renderAppsView();
   if (!appsState.pending && appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; }
 }
-async function openApps(username) {
-  byId('appsUsername').textContent = username || '—'; byId('appsSearch').value = ''; byId('appsCategory').innerHTML = '<option value="">Все категории</option>'; byId('appsRows').innerHTML = '<tr><td colspan="5" class="muted">Ожидание ответа клиента…</td></tr>'; byId('appsStatus').value = 'Отправляем запрос…'; byId('appsBg').style.display = 'flex';
-  await jpost('/api/admin/users/request-apps', { username });
+async function requestAppsRefresh() {
+  if (!appsState.username) return;
+  byId('appsStatus').value = 'Запрашиваем свежий список…';
+  await jpost('/api/admin/users/request-apps', { username: appsState.username });
   if (appsPollTimer) clearInterval(appsPollTimer);
-  appsPollTimer = setInterval(() => { loadAppsView(username).catch(() => {}); }, 2000);
-  await loadAppsView(username);
+  appsPollTimer = setInterval(() => { loadAppsView(appsState.username).catch(() => {}); }, 2000);
+  await loadAppsView(appsState.username);
+}
+async function openApps(username) {
+  appsState = { username, pending: false, report: null };
+  byId('appsUsername').textContent = username || '—';
+  byId('appsSearch').value = '';
+  byId('appsCategory').innerHTML = '<option value="">Все категории</option>';
+  byId('appsRows').innerHTML = '<tr><td colspan="5" class="muted">Нажмите «Обновить список», чтобы запросить приложения у клиента.</td></tr>';
+  byId('appsStatus').value = 'Список ещё не запрашивался';
+  byId('appsBg').style.display = 'flex';
+  if (appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; }
+  try { await loadAppsView(username); } catch (_) {}
 }
 function closeApps() { byId('appsBg').style.display = 'none'; if (appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; } }
+
+function openProfileModal(isEdit = false) { if (byId('profileModalTitle')) byId('profileModalTitle').textContent = isEdit ? 'Обновить профиль' : 'Создать профиль'; byId('profileBg').style.display = 'flex'; }
+function closeProfileModal() { byId('profileBg').style.display = 'none'; }
+function resetProfileForm() { fillProfileForm({ name:'', pool_name:'', pool_subnet:'', pool_gateway:'', lease_seconds:'', full_tunnel:true, dns_servers:'', include_routes:'', exclude_routes:'', mtu:'', mss_clamp:'', note:'' }); }
 
 function profilePayloadFromForm() {
   return {
@@ -542,7 +559,7 @@ document.addEventListener('click', async (e) => {
   if (action === 'disableuser') await disableUser(user);
   if (action === 'enableuser') await enableUser(user);
   if (action === 'delete') await deleteUser(user);
-  if (action === 'editprofile') fillProfileForm(findProfile(pname));
+  if (action === 'editprofile') { fillProfileForm(findProfile(pname)); openProfileModal(true); }
   if (action === 'deleteprofile') await deleteProfile(pname);
 });
 
@@ -579,6 +596,7 @@ if (byId('btnSaveProfile')) {
     if (!payload.name) { alert('Укажите имя профиля'); return; }
     await jpost('/api/admin/profiles', payload);
     await loadAll();
+    closeProfileModal();
     alert('Профиль сохранён');
   });
 }
@@ -609,3 +627,8 @@ localStorage.setItem('tlsctrl_api_base', API_BASE);
 syncApiBaseUI();
 Promise.all([loadSettings().catch(() => {}), loadAll().catch(console.error)]).then(() => renderHealth());
 setInterval(() => { loadAll().catch(() => {}); }, 3000);
+
+if (byId('btnOpenProfileModal')) byId('btnOpenProfileModal').addEventListener('click', () => { resetProfileForm(); openProfileModal(false); });
+if (byId('btnCloseProfileModal')) byId('btnCloseProfileModal').addEventListener('click', closeProfileModal);
+if (byId('btnAppsRefresh')) byId('btnAppsRefresh').addEventListener('click', () => { requestAppsRefresh().catch(e => alert('Не удалось обновить список приложений: ' + (e?.message || e))); });
+Array.from(document.querySelectorAll('.tabBtn')).forEach((btn) => btn.addEventListener('click', () => { const tab = btn.getAttribute('data-tab'); document.querySelectorAll('.tabBtn').forEach(x => x.classList.toggle('active', x === btn)); document.querySelectorAll('.tabPanel').forEach(p => p.classList.toggle('active', p.getAttribute('data-panel') === tab)); }));

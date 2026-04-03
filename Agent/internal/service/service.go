@@ -75,6 +75,113 @@ type userMeta struct {
 	Profile string `json:"profile,omitempty"`
 }
 
+type persistedUser struct {
+	Username   string    `json:"username"`
+	CertSerial string    `json:"cert_serial"`
+	Enabled    bool      `json:"enabled"`
+	Profile    string    `json:"profile,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+func (s *Service) usersPath() string {
+	if s.pki == nil || strings.TrimSpace(s.pki.DataDir) == "" {
+		return filepath.Join(".", "agent-data", "users.json")
+	}
+	return filepath.Join(s.pki.DataDir, "users.json")
+}
+
+func (s *Service) loadPersistedUsers() (map[string]persistedUser, error) {
+	path := s.usersPath()
+	if err := ensureDir(path); err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]persistedUser{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]persistedUser
+	if len(raw) == 0 {
+		return map[string]persistedUser{}, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = map[string]persistedUser{}
+	}
+	return out, nil
+}
+
+func (s *Service) savePersistedUsers(users map[string]persistedUser) error {
+	path := s.usersPath()
+	if err := ensureDir(path); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(users, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+func (s *Service) persistUserRecord(username, certSerial string, enabled bool, profile string) error {
+	users, err := s.loadPersistedUsers()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(profile) == "" {
+		profile = "default"
+	}
+	users[username] = persistedUser{
+		Username: username,
+		CertSerial: certSerial,
+		Enabled: enabled,
+		Profile: profile,
+		UpdatedAt: time.Now().UTC(),
+	}
+	return s.savePersistedUsers(users)
+}
+
+func (s *Service) deletePersistedUser(username string) error {
+	users, err := s.loadPersistedUsers()
+	if err != nil {
+		return err
+	}
+	delete(users, username)
+	return s.savePersistedUsers(users)
+}
+
+func (s *Service) SyncPersistedUsers(ctx context.Context) error {
+	users, err := s.loadPersistedUsers()
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		profile := strings.TrimSpace(u.Profile)
+		if profile == "" {
+			profile = "default"
+		}
+		if !s.profileExists(profile) {
+			continue
+		}
+		if err := s.backend.UpsertUser(ctx, model.User{
+			Username: u.Username,
+			CertSerial: u.CertSerial,
+			Enabled: u.Enabled,
+			Profile: profile,
+		}); err != nil {
+			return fmt.Errorf("sync persisted user %q: %w", u.Username, err)
+		}
+		if err := s.setUserProfile(u.Username, profile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func ensureDir(path string) error {
 	return os.MkdirAll(filepath.Dir(path), 0o700)
 }
@@ -412,6 +519,9 @@ func (s *Service) UpsertUser(ctx context.Context, username, certSerial string, e
 	if err := s.setUserProfile(username, profile); err != nil {
 		return err
 	}
+	if err := s.persistUserRecord(username, certSerial, enabled, profile); err != nil {
+		return err
+	}
 	log.Printf("service UpsertUser ok username=%q ms=%d", username, sinceMs(start))
 	return nil
 }
@@ -450,6 +560,9 @@ func (s *Service) IssueBundle(ctx context.Context, username string, enabled bool
 	if err := s.setUserProfile(username, profile); err != nil {
 		return nil, "", err
 	}
+	if err := s.persistUserRecord(username, serial, enabled, profile); err != nil {
+		return nil, "", err
+	}
 	log.Printf("service IssueBundle ok username=%q serial=%s ms=%d", username, shortSerial(serial), sinceMs(start))
 	return bundle, serial, nil
 }
@@ -471,6 +584,12 @@ func (s *Service) ReissueBundle(ctx context.Context, username string, profile st
 		return nil, "", fmt.Errorf("profile %q not found", profile)
 	}
 	log.Printf("service ReissueBundle start username=%q profile=%q", username, profile)
+	enabled := true
+	if persisted, err := s.loadPersistedUsers(); err == nil {
+		if u, ok := persisted[username]; ok {
+			enabled = u.Enabled
+		}
+	}
 	bundle, serial, err := s.pki.IssueBundle(username, profile)
 	if err != nil {
 		log.Printf("service ReissueBundle pki failed username=%q ms=%d error=%v", username, sinceMs(start), err)
@@ -481,6 +600,9 @@ func (s *Service) ReissueBundle(ctx context.Context, username string, profile st
 		return nil, "", fmt.Errorf("bundle reissued but vpp sync failed for %q: %w", username, err)
 	}
 	if err := s.setUserProfile(username, profile); err != nil {
+		return nil, "", err
+	}
+	if err := s.persistUserRecord(username, serial, enabled, profile); err != nil {
 		return nil, "", err
 	}
 	log.Printf("service ReissueBundle ok username=%q serial=%s ms=%d", username, shortSerial(serial), sinceMs(start))
@@ -500,6 +622,10 @@ func (s *Service) ReissueUser(ctx context.Context, username, certSerial string) 
 		log.Printf("service ReissueUser failed username=%q ms=%d error=%v", username, sinceMs(start), err)
 		return fmt.Errorf("reissue user %q in vpp: %w", username, err)
 	}
+	profile := s.userProfile(username)
+	if err := s.persistUserRecord(username, certSerial, true, profile); err != nil {
+		return err
+	}
 	log.Printf("service ReissueUser ok username=%q ms=%d", username, sinceMs(start))
 	return nil
 }
@@ -518,6 +644,7 @@ func (s *Service) DeleteUser(ctx context.Context, username string) error {
 		return fmt.Errorf("delete user %q from vpp: %w", username, err)
 	}
 	_ = s.deleteUserProfile(username)
+	_ = s.deletePersistedUser(username)
 	log.Printf("service DeleteUser ok username=%q ms=%d", username, sinceMs(start))
 	return nil
 }
@@ -530,13 +657,41 @@ func (s *Service) Users(ctx context.Context) ([]model.User, error) {
 		return nil, err
 	}
 	meta, _ := s.loadUserMeta()
+	persisted, _ := s.loadPersistedUsers()
+	seen := map[string]bool{}
 	for i := range users {
+		seen[users[i].Username] = true
+		if pu, ok := persisted[users[i].Username]; ok {
+			if strings.TrimSpace(users[i].CertSerial) == "" {
+				users[i].CertSerial = pu.CertSerial
+			}
+			users[i].Enabled = pu.Enabled
+		}
 		if m, ok := meta[users[i].Username]; ok && strings.TrimSpace(m.Profile) != "" {
 			users[i].Profile = m.Profile
+		} else if pu, ok := persisted[users[i].Username]; ok && strings.TrimSpace(pu.Profile) != "" {
+			users[i].Profile = pu.Profile
 		} else if strings.TrimSpace(users[i].Profile) == "" {
 			users[i].Profile = "default"
 		}
 	}
+	for username, pu := range persisted {
+		if seen[username] {
+			continue
+		}
+		profile := strings.TrimSpace(pu.Profile)
+		if profile == "" {
+			profile = "default"
+		}
+		users = append(users, model.User{
+			Username: username,
+			CertSerial: pu.CertSerial,
+			Enabled: pu.Enabled,
+			Profile: profile,
+			UpdatedAt: pu.UpdatedAt,
+		})
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
 	log.Printf("service Users ok ms=%d count=%d", sinceMs(start), len(users))
 	return users, nil
 }
@@ -553,21 +708,6 @@ func (s *Service) Sessions(ctx context.Context) ([]model.Session, error) {
 	}
 	log.Printf("service Sessions ok ms=%d count=%d", sinceMs(start), len(sessions))
 	return sessions, nil
-}
-
-
-func (s *Service) VPNTunnels(ctx context.Context) ([]model.VPNTunnel, error) {
-	start := time.Now()
-	if err := s.ensureVPP(ctx); err != nil {
-		log.Printf("service VPNTunnels ensureVPP warning ms=%d error=%v", sinceMs(start), err)
-	}
-	tunnels, err := s.backend.ListVPNTunnels(ctx)
-	if err != nil {
-		log.Printf("service VPNTunnels failed ms=%d error=%v", sinceMs(start), err)
-		return nil, err
-	}
-	log.Printf("service VPNTunnels ok ms=%d count=%d", sinceMs(start), len(tunnels))
-	return tunnels, nil
 }
 
 func (s *Service) DisconnectSession(ctx context.Context, username string) error {
@@ -780,9 +920,6 @@ func (s *Service) UserCertInfo(ctx context.Context, username string) (map[string
 func (s *Service) Health(ctx context.Context) map[string]any {
 	settings, _ := s.CurrentSettings()
 	profiles, _ := s.loadProfiles()
-	tunnels, _ := s.backend.ListVPNTunnels(ctx)
-	activeTunnels := 0
-	for _, t := range tunnels { if t.Running { activeTunnels++ } }
 	return map[string]any{
 		"ok":                 true,
 		"vpp_required":       s.requireVPP,
@@ -795,7 +932,5 @@ func (s *Service) Health(ctx context.Context) map[string]any {
 		"plugin_listen_addr": settings.PluginListenAddr,
 		"plugin_listen_port": settings.PluginListenPort,
 		"profiles_count":     len(profiles),
-		"vpn_tunnels_count":  len(tunnels),
-		"vpn_running_count":  activeTunnels,
 	}
 }

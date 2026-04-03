@@ -112,30 +112,6 @@ func (m *MemoryClient) ListSessions(ctx context.Context) ([]model.Session, error
 	return out, nil
 }
 
-func (m *MemoryClient) ListVPNTunnels(ctx context.Context) ([]model.VPNTunnel, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := make([]model.VPNTunnel, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		out = append(out, model.VPNTunnel{
-			TunnelID:   0,
-			Username:   s.Username,
-			Profile:    "",
-			AssignedIP: s.IP,
-			ClientIP:   s.IP,
-			Running:    s.Connected,
-			LastSeen:   s.LastSeen,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Running != out[j].Running {
-			return out[i].Running
-		}
-		return out[i].Username < out[j].Username
-	})
-	return out, nil
-}
-
 func (m *MemoryClient) DisconnectSession(ctx context.Context, username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -540,6 +540,16 @@ tlsctrl_client_set_disconnect_command_locked (tlsctrl_client_t *client)
 }
 
 static void
+tlsctrl_client_mark_disconnected_locked (tlsctrl_client_t *client)
+{
+  if (!client)
+    return;
+  client->last_seen_unix_ns = 0;
+  client->connected_at_unix_ns = 0;
+  client->heartbeat_count = 0;
+}
+
+static void
 tlsctrl_client_clear_disconnect_state_locked (tlsctrl_client_t *client)
 {
   if (!client)
@@ -685,6 +695,8 @@ tlsctrl_user_add_or_update (u8 *username, u8 *cert_serial, u8 enabled)
   if (cert_serial && vec_len (cert_serial))
     tlsctrl_client_set_string (&client->cert_serial, cert_serial);
   client->enabled = enabled ? 1 : 0;
+  if (client->enabled)
+    tlsctrl_client_clear_disconnect_state_locked (client);
   client->generation += 1;
   clib_spinlock_unlock_if_init (&tm->clients_lock);
   return 0;
@@ -1168,6 +1180,24 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
           goto done;
         }
 
+      if (body)
+        {
+          u8 *intent2 = tlsctrl_json_extract_string (body, "connect_intent");
+          if (intent2 && !strcmp ((char *) intent2, "disconnect"))
+            {
+              tlsctrl_vpn_tunnel_close ((char *) username);
+              clib_spinlock_lock_if_init (&tm->clients_lock);
+              client = tlsctrl_client_find_internal (username, 1);
+              tlsctrl_client_mark_disconnected_locked (client);
+              clib_spinlock_unlock_if_init (&tm->clients_lock);
+              vec_free (intent2);
+              tlsctrl_build_json_response (conn, 200, "OK",
+                                           "{\"ok\":true,\"status\":\"disconnected\"}");
+              goto done;
+            }
+          vec_free (intent2);
+        }
+
       clib_spinlock_lock_if_init (&tm->clients_lock);
       client = tlsctrl_client_find_internal (username, 1);
       tlsctrl_client_touch_heartbeat_locked (client,
@@ -1276,6 +1306,15 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
         }
 
       tlsctrl_vpn_stream_attach (tunnel_id, conn->session_handle);
+
+      clib_spinlock_lock_if_init (&tm->clients_lock);
+      client = tlsctrl_client_find_internal (username, 1);
+      tlsctrl_client_touch_heartbeat_locked (
+        client,
+        (peer_cert_serial && vec_len (peer_cert_serial)) ? peer_cert_serial : 0,
+        body, mac_hdr, sys_user_hdr, os_type_hdr, os_version_hdr, uptime_hdr,
+        0, (u8 *) "manual_connect", 1);
+      clib_spinlock_unlock_if_init (&tm->clients_lock);
 
       json = format (
         0,

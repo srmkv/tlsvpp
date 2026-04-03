@@ -21,18 +21,6 @@ type User struct {
 	LastSeen   time.Time `json:"last_seen"`
 }
 
-
-
-type VPNTunnel struct {
-	TunnelID   uint32    `json:"tunnel_id"`
-	Username   string    `json:"username"`
-	Profile    string    `json:"profile"`
-	AssignedIP string    `json:"assigned_ip"`
-	ClientIP   string    `json:"client_ip"`
-	Running    bool      `json:"running"`
-	LastSeen   time.Time `json:"last_seen"`
-}
-
 type VPNProfile struct {
 	Name          string    `json:"name"`
 	PoolName      string    `json:"pool_name,omitempty"`

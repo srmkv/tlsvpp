@@ -39,8 +39,18 @@ echo "The source API file for this custom package is stored at:"
 echo "  api/tlsctrl_vpn.api"
 
 
+
 # Replace generator-produced tlsctrlvpn RPC helper with GovPP-compatible implementation.
 if [[ -f internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn_rpc.ba.go && -f hack/tlsctrl_vpn_rpc.compat.go ]]; then
   cp hack/tlsctrl_vpn_rpc.compat.go internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn_rpc.ba.go
+
+  # Some generator versions emit Go symbols as TlsctrlVPN..., others as TlsctrlVpn...
+  # Align the compat helper to whatever was generated in tlsctrl_vpn.ba.go.
+  if [[ -f internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn.ba.go ]]; then
+    if grep -q 'type TlsctrlVPNPoolSet struct' internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn.ba.go; then
+      sed -i 's/TlsctrlVpn/TlsctrlVPN/g' internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn_rpc.ba.go
+    fi
+  fi
+
   echo "patched internal/vppbinapi/tlsctrlvpn/tlsctrl_vpn_rpc.ba.go"
 fi

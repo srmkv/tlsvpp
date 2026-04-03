@@ -37,6 +37,22 @@
     .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:18px;width:min(920px,100%);max-height:88vh;overflow:auto}
     .titleBar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.splitInfo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .kv{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:start}.kv .k{font-size:13px;font-weight:700;color:var(--muted)} .kv .v{font-size:14px;word-break:break-word}.sessionHistory{display:flex;flex-direction:column;gap:10px}.histItem{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f9fbfe}.histTop{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.histMeta{font-size:12px;color:var(--muted)}.roadmapList{display:flex;flex-direction:column;gap:12px}.roadmapCard{border:1px solid var(--line);border-radius:14px;background:#f9fbfe;overflow:hidden}.roadmapCard summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.roadmapCard summary::-webkit-details-marker{display:none}.roadmapHead{display:flex;flex-direction:column;gap:4px}.roadmapMeta{font-size:12px;color:var(--muted)}.roadmapBody{padding:0 14px 14px 14px}.timeline{position:relative;display:flex;flex-direction:column;gap:12px;margin:4px 0 0 0;padding-left:18px}.timeline:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:#dbe7f3}.step{position:relative;padding-left:18px}.step:before{content:'';position:absolute;left:-17px;top:4px;width:10px;height:10px;border-radius:999px;background:#94a3b8;border:2px solid #fff;box-shadow:0 0 0 2px #dbe7f3}.stepOpen:before{background:#2563eb}.stepHandshake:before{background:#16a34a}.stepActivity:before{background:#d97706}.stepClose:before{background:#dc2626}.stepTitle{font-size:14px;font-weight:700}.stepMeta{font-size:12px;color:var(--muted);margin-top:2px}.roadmapEmpty{padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fff}
+  
+    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    .tabBtn{border-radius:999px;padding:10px 16px;background:#eef4ff;border-color:#d7e5ff}
+    .tabBtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .tabPanel{display:none}.tabPanel.active{display:block}
+    .statusIcons{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .stateDot{width:26px;height:26px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;border:1px solid var(--line);background:#fff}
+    .stateOn{background:#e9f8ee;color:var(--ok);border-color:#b9e6c6}
+    .stateOff{background:#f3f4f6;color:#64748b;border-color:#dce6f2}
+    .stateWarn{background:#fff7ed;color:#b45309;border-color:#f5d8a8}
+    .stateBad{background:#fdecea;color:var(--bad);border-color:#f1b8b1}
+    .stateInfo{background:#eef4ff;color:#1d4ed8;border-color:#cfe0ff}
+    .headActions{display:flex;gap:10px;flex-wrap:wrap}
+    .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+    .emptyNote{padding:14px;border:1px dashed var(--line);border-radius:14px;background:#f9fbfe;color:var(--muted)}
+
   </style>
 </head>
 <body>
@@ -63,7 +79,13 @@
     </div>
   </div>
 
+  <div class="tabs">
+    <button type="button" class="tabBtn active" data-tab="settings">Настройки TLS</button>
+    <button type="button" class="tabBtn" data-tab="profiles">VPN профили</button>
+    <button type="button" class="tabBtn" data-tab="users">Пользователи и сессии</button>
+  </div>
 
+  <div class="tabPanel active" data-panel="settings">
   <div class="card">
     <div class="row">
       <div class="field">
@@ -141,6 +163,9 @@
     </div>
   </div>
 
+  </div>
+
+  <div class="tabPanel" data-panel="profiles">
   <div class="grid2">
     <div class="card">
       <div class="row" style="justify-content:space-between">
@@ -163,29 +188,22 @@
       </div>
     </div>
     <div class="card">
-      <div style="font-weight:800;margin-bottom:12px">Создать / обновить профиль</div>
-      <div class="row">
-        <div class="field"><label for="profileName">Имя профиля</label><input id="profileName" placeholder="default" /></div>
-        <div class="field"><label for="profilePoolName">Pool name</label><input id="profilePoolName" placeholder="corp" /></div>
-        <div class="field"><label for="profilePoolSubnet">Pool subnet</label><input id="profilePoolSubnet" placeholder="10.90.0.0/24" /></div>
-        <div class="field"><label for="profilePoolGateway">Pool gateway</label><input id="profilePoolGateway" placeholder="10.90.0.1" /></div>
+      <div class="sectionHead">
+        <div>
+          <div style="font-weight:800">Управление профилями</div>
+          <div class="muted small">Создание и редактирование профиля открывается во всплывающем окне.</div>
+        </div>
+        <div class="headActions">
+          <button type="button" class="btnPrimary" id="btnOpenProfileModal">Создать профиль</button>
+        </div>
       </div>
-      <div class="row">
-        <div class="field" style="max-width:180px"><label for="profileLeaseSeconds">Lease seconds</label><input id="profileLeaseSeconds" placeholder="3600" /></div>
-        <div class="field" style="max-width:180px"><label for="profileFullTunnel">Full tunnel</label><select id="profileFullTunnel"><option value="true">Да</option><option value="false">Нет</option></select></div>
-        <div class="field"><label for="profileDNSServers">DNS servers</label><input id="profileDNSServers" placeholder="1.1.1.1,8.8.8.8" /></div>
-        <div class="field"><label for="profileIncludeRoutes">Include routes</label><input id="profileIncludeRoutes" placeholder="10.0.0.0/8,192.168.0.0/16" /></div>
-      </div>
-      <div class="row">
-        <div class="field"><label for="profileExcludeRoutes">Exclude routes</label><input id="profileExcludeRoutes" placeholder="192.168.0.0/24" /></div>
-        <div class="field" style="max-width:160px"><label for="profileMTU">MTU</label><input id="profileMTU" placeholder="1400" /></div>
-        <div class="field" style="max-width:160px"><label for="profileMSSClamp">MSS clamp</label><input id="profileMSSClamp" placeholder="1360" /></div>
-        <div class="field"><label for="profileNote">Примечание</label><input id="profileNote" placeholder="описание профиля" /></div>
-        <div><button type="button" id="btnSaveProfile">Сохранить профиль</button></div>
-      </div>
+      <div class="emptyNote">Выберите профиль в таблице слева для редактирования или создайте новый профиль через кнопку выше.</div>
     </div>
   </div>
 
+  </div>
+
+  <div class="tabPanel" data-panel="users">
   <div class="card">
     <div class="row" style="justify-content:space-between">
       <div>
@@ -204,6 +222,8 @@
         <tbody id="rows"><tr><td colspan="11" class="muted">Нет данных</td></tr></tbody>
       </table>
     </div>
+  </div>
+  </div>
   </div>
 </div>
 
@@ -247,8 +267,9 @@
         <select id="appsCategory"><option value="">Все категории</option></select>
       </div>
       <div class="field" style="max-width:240px">
-        <label>Статус запроса</label>
-        <input id="appsStatus" readonly />
+        <label>Статус</label>
+        <input id="appsStatus" readonly /></div>
+      <div><button type="button" id="btnAppsRefresh">Обновить список</button></div>
       </div>
     </div>
     <div class="tableWrap" style="max-height:52vh">
@@ -309,5 +330,33 @@
 </div>
 
 <script src="./app.js"></script>
+
+<div class="modalBg" id="profileBg">
+  <div class="modal" style="width:min(980px,100%)">
+    <div class="titleBar"><div style="font-weight:800" id="profileModalTitle">Создать / обновить профиль</div><button type="button" id="btnCloseProfileModal">Закрыть</button></div>
+    <div class="row">
+      <div class="field"><label for="profileName">Имя профиля</label><input id="profileName" placeholder="default" /></div>
+      <div class="field"><label for="profilePoolName">Pool name</label><input id="profilePoolName" placeholder="corp" /></div>
+      <div class="field"><label for="profilePoolSubnet">Pool subnet</label><input id="profilePoolSubnet" placeholder="10.90.0.0/24" /></div>
+      <div class="field"><label for="profilePoolGateway">Pool gateway</label><input id="profilePoolGateway" placeholder="10.90.0.1" /></div>
+    </div>
+    <div class="row">
+      <div class="field" style="max-width:180px"><label for="profileLeaseSeconds">Lease seconds</label><input id="profileLeaseSeconds" placeholder="3600" /></div>
+      <div class="field" style="max-width:180px"><label for="profileFullTunnel">Full tunnel</label><select id="profileFullTunnel"><option value="true">Да</option><option value="false">Нет</option></select></div>
+      <div class="field"><label for="profileDNSServers">DNS servers</label><input id="profileDNSServers" placeholder="1.1.1.1,8.8.8.8" /></div>
+      <div class="field"><label for="profileIncludeRoutes">Include routes</label><input id="profileIncludeRoutes" placeholder="10.0.0.0/8,192.168.0.0/16" /></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="profileExcludeRoutes">Exclude routes</label><input id="profileExcludeRoutes" placeholder="192.168.0.0/24" /></div>
+      <div class="field" style="max-width:160px"><label for="profileMTU">MTU</label><input id="profileMTU" placeholder="1400" /></div>
+      <div class="field" style="max-width:160px"><label for="profileMSSClamp">MSS clamp</label><input id="profileMSSClamp" placeholder="1360" /></div>
+      <div class="field"><label for="profileNote">Примечание</label><input id="profileNote" placeholder="описание профиля" /></div>
+    </div>
+    <div class="headActions" style="justify-content:flex-end;margin-top:12px">
+      <button type="button" id="btnSaveProfile">Сохранить профиль</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

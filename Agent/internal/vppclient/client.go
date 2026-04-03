@@ -14,7 +14,6 @@ type Client interface {
 
 	ListUsers(ctx context.Context) ([]model.User, error)
 	ListSessions(ctx context.Context) ([]model.Session, error)
-	ListVPNTunnels(ctx context.Context) ([]model.VPNTunnel, error)
 
 	DisconnectSession(ctx context.Context, username string) error
 	ClientHeartbeat(ctx context.Context, hb model.ClientHeartbeat) error

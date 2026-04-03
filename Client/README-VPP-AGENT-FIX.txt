@@ -1,0 +1,11 @@
+Исправления для работы с новым VPP agent:
+- bundle metadata.json теперь читается корректно:
+  - username
+  - server_url
+  - server_name
+- клиент больше не использует старые пути /api/v1/*
+- heartbeat идёт на /api/client/heartbeat по mTLS
+- команды читаются с /api/client/command?username=...
+- список приложений отправляется на /api/client/apps
+- ручное отключение пытается дернуть admin API /api/admin/sessions/disconnect
+- статус "Подключен" ставится только после успешного heartbeat на mTLS endpoint agent

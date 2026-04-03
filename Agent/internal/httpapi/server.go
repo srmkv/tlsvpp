@@ -109,6 +109,10 @@ func (s *Server) Run(ctx context.Context) error {
 		log.Printf("http Run SyncVPNProfiles failed error=%v", err)
 		return err
 	}
+	if err := s.svc.SyncPersistedUsers(context.Background()); err != nil {
+		log.Printf("http Run SyncPersistedUsers failed error=%v", err)
+		return err
+	}
 	log.Printf("http Run init complete")
 
 	mux := http.NewServeMux()
@@ -127,7 +131,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/admin/bundle", s.handleAdminBundle)
 	mux.HandleFunc("/api/admin/reissue-bundle", s.handleAdminReissueBundle)
 	mux.HandleFunc("/api/admin/plugin/sync-vpn", s.handleAdminSyncVPN)
-	mux.HandleFunc("/api/admin/plugin/tunnels", s.handleAdminPluginTunnels)
 
 	httpSrv := &http.Server{
 		Addr:              s.cfg.AdminListenAddr,
@@ -298,20 +301,6 @@ func (s *Server) handleAdminUserApps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, view)
 }
-
-func (s *Server) handleAdminPluginTunnels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", 405)
-		return
-	}
-	tunnels, err := s.svc.VPNTunnels(r.Context())
-	if err != nil {
-		writeError(w, "admin_plugin_tunnels", 500, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"tunnels": tunnels})
-}
-
 func (s *Server) handleAdminSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)

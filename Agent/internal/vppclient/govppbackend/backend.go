@@ -367,7 +367,7 @@ func (bkd *Backend) DisconnectSession(ctx context.Context, username string) erro
 	}
 
 	bkd.mu.Lock()
-	bkd.blocked[username] = true
+	delete(bkd.blocked, username)
 	bkd.mu.Unlock()
 
 	return bkd.withConn(ctx, "disconnect-session", func(ctx context.Context, c tlsctrl.RPCService) error {
@@ -568,38 +568,4 @@ func (bkd *Backend) SetVPNProfile(ctx context.Context, name, pool string, fullTu
 		})
 		return err
 	})
-}
-
-
-func (bkd *Backend) ListVPNTunnels(ctx context.Context) ([]model.VPNTunnel, error) {
-	out := make([]model.VPNTunnel, 0)
-	err := bkd.withVPNConn(ctx, "vpn-tunnel-dump", func(ctx context.Context, vpnc tlsctrlvpn.RPCService) error {
-		stream, err := vpnc.TlsctrlVPNTunnelDump(ctx, &tlsctrlvpn.TlsctrlVPNTunnelDump{})
-		if err != nil {
-			return err
-		}
-		for {
-			item, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return err
-			}
-			out = append(out, model.VPNTunnel{
-				TunnelID:   item.TunnelID,
-				Username:   str(item.Username),
-				Profile:    str(item.Profile),
-				AssignedIP: str(item.AssignedIP),
-				ClientIP:   str(item.ClientIP),
-				Running:    item.Running,
-				LastSeen:   nsToTime(item.LastSeenUnixNs),
-			})
-		}
-		return nil
-	})
-	if err == nil && bkd.verbose {
-		log.Printf("govpp result op=vpn-tunnel-dump count=%d", len(out))
-	}
-	return out, err
 }
