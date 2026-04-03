@@ -1,0 +1,146 @@
+/* Hey Emacs use -*- mode: C -*- */
+
+option version = "0.2.0";
+
+service {
+  rpc tlsctrl_user_add_del returns tlsctrl_user_add_del_reply;
+  rpc tlsctrl_user_reissue returns tlsctrl_user_reissue_reply;
+  rpc tlsctrl_user_dump returns stream tlsctrl_user_details;
+  rpc tlsctrl_session_dump returns stream tlsctrl_session_details;
+  rpc tlsctrl_session_disconnect returns tlsctrl_session_disconnect_reply;
+  rpc tlsctrl_client_command_set returns tlsctrl_client_command_set_reply;
+  rpc tlsctrl_client_command_get returns tlsctrl_client_command_get_reply;
+  rpc tlsctrl_client_heartbeat returns tlsctrl_client_heartbeat_reply;
+  rpc tlsctrl_client_apps_set returns tlsctrl_client_apps_set_reply;
+  rpc tlsctrl_client_apps_get returns tlsctrl_client_apps_get_reply;
+  rpc tlsctrl_listener_config_set returns tlsctrl_listener_config_set_reply;
+};
+
+autoreply define tlsctrl_user_add_del {
+  u32 client_index;
+  u32 context;
+  u8 is_add;
+  u8 enabled;
+  string username[128];
+  string cert_serial[256];
+};
+
+autoreply define tlsctrl_user_reissue {
+  u32 client_index;
+  u32 context;
+  string username[128];
+  string cert_serial[256];
+};
+
+define tlsctrl_user_dump {
+  u32 client_index;
+  u32 context;
+};
+
+define tlsctrl_user_details {
+  u32 context;
+  string username[128];
+  string cert_serial[256];
+  u8 enabled;
+  u64 generation;
+  u64 last_seen_unix_ns;
+};
+
+define tlsctrl_session_dump {
+  u32 client_index;
+  u32 context;
+};
+
+define tlsctrl_session_details {
+  u32 context;
+  string username[128];
+  string cert_serial[256];
+  string system_user[128];
+  string os_name[64];
+  string os_version[128];
+  string system_uptime[128];
+  string ip[64];
+  string mac[64];
+  string source[64];
+  string interfaces_json[8192];
+  u8 status;
+  u64 connected_at_unix_ns;
+  u64 last_seen_unix_ns;
+  u64 apps_updated_at_unix_ns;
+  u32 apps_count;
+};
+
+autoreply define tlsctrl_session_disconnect {
+  u32 client_index;
+  u32 context;
+  string username[128];
+};
+
+autoreply define tlsctrl_client_command_set {
+  u32 client_index;
+  u32 context;
+  string username[128];
+  string command_type[64];
+  string payload[4096];
+};
+
+define tlsctrl_client_command_get {
+  u32 client_index;
+  u32 context;
+  string username[128];
+};
+
+define tlsctrl_client_command_get_reply {
+  u32 context;
+  i32 retval;
+  string command_type[64];
+  string payload[4096];
+};
+
+autoreply define tlsctrl_client_heartbeat {
+  u32 client_index;
+  u32 context;
+  string username[128];
+  string cert_serial[256];
+  string system_user[128];
+  string os_name[64];
+  string os_version[128];
+  string system_uptime[128];
+  string ip[64];
+  string mac[64];
+  string source[64];
+  string interfaces_json[8192];
+  string connect_intent[64];
+};
+
+autoreply define tlsctrl_client_apps_set {
+  u32 client_index;
+  u32 context;
+  string username[128];
+  u32 count;
+  string payload[65535];
+};
+
+define tlsctrl_client_apps_get {
+  u32 client_index;
+  u32 context;
+  string username[128];
+};
+
+define tlsctrl_client_apps_get_reply {
+  u32 context;
+  i32 retval;
+  u32 count;
+  u64 generated_at_unix_ns;
+  string payload[65535];
+};
+
+autoreply define tlsctrl_listener_config_set {
+  u32 client_index;
+  u32 context;
+  string listen_addr[128];
+  u16 listen_port;
+  string server_cert_pem[16384];
+  string server_key_pem[16384];
+  string ca_cert_pem[16384];
+};

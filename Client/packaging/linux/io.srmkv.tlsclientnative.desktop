@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TLS Client Native
+GenericName=TLS client
+Comment=Нативный Linux-клиент для mTLS-подключения
+Exec=tlsclientnative
+Icon=io.srmkv.tlsclientnative
+Terminal=false
+Categories=Network;Security;
+StartupNotify=true
+StartupWMClass=tlsclientnative
+Keywords=tls;client;security;mtls;
