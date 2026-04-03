@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TLSCTRL Web</title>
+  <title>ZTNA Экран-М</title>
   <style>
     :root{
       --bg:#f4f7fb; --panel:#fff; --line:#dce6f2; --text:#162338; --muted:#6d7b90;
@@ -17,12 +17,12 @@
     h1{margin:0 0 8px 0;font-size:28px}.muted{color:var(--muted)} .small{font-size:13px}
     .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
     .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.stack{display:flex;flex-direction:column;gap:8px}.tiny{font-size:12px}.codeBox{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;background:#f9fbfe;border:1px solid var(--line);border-radius:12px;padding:10px}.badgeRow{display:flex;gap:6px;flex-wrap:wrap}.pillInfo{background:#eef4ff;color:#1d4ed8}.pillMute{background:#f3f4f6;color:#475569}
-    .row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
-    .field{display:flex;flex-direction:column;gap:6px;min-width:180px;flex:1}
+    .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+    .field{display:flex;flex-direction:column;gap:6px;min-width:220px;flex:1 1 220px}
     label{font-size:13px;font-weight:700;color:var(--muted)}
-    input,select{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:var(--text)}
+    input,select,textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:var(--text);font-family:inherit;line-height:1.25}
     input:focus,select:focus{border-color:var(--accent)}
-    button{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 12px;font-size:14px;font-weight:700;cursor:pointer;color:var(--text)}
+    button{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:var(--text);min-height:42px;font-family:inherit;line-height:1.1}
     button:hover{border-color:var(--accent)}
     .btnPrimary{background:var(--accent);color:#fff;border-color:var(--accent)} .btnWarn{background:#fffaf0;color:var(--warn);border-color:#efd29e}
     .pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
@@ -31,10 +31,16 @@
     th,td{text-align:left;padding:10px;border-bottom:1px solid #edf2f8;vertical-align:top;font-size:14px}
     th{font-size:12px;color:var(--muted);font-weight:800;background:#f9fbfe;position:sticky;top:0}
     .tableWrap{overflow:auto;max-height:56vh;border:1px solid var(--line);border-radius:14px}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.actions{display:flex;gap:8px;flex-wrap:nowrap;white-space:nowrap}
-    .iconBtn{width:34px;min-width:34px;flex:0 0 34px;padding:8px 0;display:inline-flex;align-items:center;justify-content:center}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.actions{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap}
+    .iconBtn{width:34px;min-width:34px;flex:0 0 34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px}
+    .actionMenu{position:relative;display:inline-block}
+    .floatingMenu{position:fixed;display:none;min-width:240px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 36px rgba(15,23,42,.14);padding:8px;z-index:2000}
+    .floatingMenu.open{display:block}
+    .menuItem{display:flex;width:100%;align-items:center;gap:10px;padding:10px 12px;border:none;background:#fff;border-radius:10px;text-align:left;font-weight:600;min-height:unset;font-family:inherit}
+    .menuItem:hover{background:#f4f7fb}
+    .menuDivider{height:1px;background:#edf2f8;margin:6px 0}
     .modalBg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
-    .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:18px;width:min(920px,100%);max-height:88vh;overflow:auto}
+    .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:18px;width:min(920px,100%);max-height:88vh;overflow:auto}.modal .row{align-items:flex-start}.modal .field{min-width:0}
     .titleBar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.splitInfo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .kv{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:start}.kv .k{font-size:13px;font-weight:700;color:var(--muted)} .kv .v{font-size:14px;word-break:break-word}.sessionHistory{display:flex;flex-direction:column;gap:10px}.histItem{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f9fbfe}.histTop{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.histMeta{font-size:12px;color:var(--muted)}.roadmapList{display:flex;flex-direction:column;gap:12px}.roadmapCard{border:1px solid var(--line);border-radius:14px;background:#f9fbfe;overflow:hidden}.roadmapCard summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.roadmapCard summary::-webkit-details-marker{display:none}.roadmapHead{display:flex;flex-direction:column;gap:4px}.roadmapMeta{font-size:12px;color:var(--muted)}.roadmapBody{padding:0 14px 14px 14px}.timeline{position:relative;display:flex;flex-direction:column;gap:12px;margin:4px 0 0 0;padding-left:18px}.timeline:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:#dbe7f3}.step{position:relative;padding-left:18px}.step:before{content:'';position:absolute;left:-17px;top:4px;width:10px;height:10px;border-radius:999px;background:#94a3b8;border:2px solid #fff;box-shadow:0 0 0 2px #dbe7f3}.stepOpen:before{background:#2563eb}.stepHandshake:before{background:#16a34a}.stepActivity:before{background:#d97706}.stepClose:before{background:#dc2626}.stepTitle{font-size:14px;font-weight:700}.stepMeta{font-size:12px;color:var(--muted);margin-top:2px}.roadmapEmpty{padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fff}
   
@@ -42,7 +48,7 @@
     .tabBtn{border-radius:999px;padding:10px 16px;background:#eef4ff;border-color:#d7e5ff}
     .tabBtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
     .tabPanel{display:none}.tabPanel.active{display:block}
-    .statusIcons{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .statusIcons{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap;min-width:max-content}
     .stateDot{width:26px;height:26px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;border:1px solid var(--line);background:#fff}
     .stateOn{background:#e9f8ee;color:var(--ok);border-color:#b9e6c6}
     .stateOff{background:#f3f4f6;color:#64748b;border-color:#dce6f2}
@@ -53,19 +59,65 @@
     .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
     .emptyNote{padding:14px;border:1px dashed var(--line);border-radius:14px;background:#f9fbfe;color:var(--muted)}
 
+
+    .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+    .sectionHead h3{margin:0;font-size:18px}
+    .top .card{min-width:420px}
+    .kv{grid-template-columns:160px 1fr}
+    .modal .row,.card .row{align-items:flex-end}
+    .profileFormGrid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:12px}
+    .profileFormGrid .field.full{grid-column:1 / -1}
+    .statusLine{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .statusText{font-size:12px;color:var(--muted)}
+    
+    .topMeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+    .healthPill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:13px;font-weight:700}
+    .healthPill.ok{background:#e9f8ee;color:var(--ok);border-color:#b9e6c6}
+    .healthPill.warn{background:#fff7ed;color:#b45309;border-color:#f5d8a8}
+    .infoDot{width:20px;height:20px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;font-size:12px;font-weight:800;cursor:help;opacity:.85}
+    .tableWrap table{min-width:1200px}
+    .statusCol{width:150px}
+
+    @media (max-width:1100px){.grid3,.grid4,.grid2{grid-template-columns:1fr}.profileFormGrid{grid-template-columns:1fr}.top{flex-direction:column}.top .card{min-width:unset;width:100%}}
+
+  
+    .summaryShell{display:flex;flex-direction:column;gap:16px}
+    .summaryHero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#fbfdff 0%,#f5f9ff 100%)}
+    .summaryHeroTitle{display:flex;flex-direction:column;gap:6px}
+    .summaryUser{font-size:22px;font-weight:800;line-height:1.1}
+    .summaryMeta{display:flex;gap:8px;flex-wrap:wrap}
+    .summaryGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+    .summarySection{border:1px solid var(--line);border-radius:16px;background:#fff;overflow:hidden}
+    .summarySectionHead{padding:12px 14px;border-bottom:1px solid #edf2f8;background:#f9fbfe;font-size:13px;font-weight:800;color:#334155}
+    .summarySectionBody{padding:14px}
+    .summaryList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+    .summaryField{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .summaryLabel{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+    .summaryValue{font-size:14px;line-height:1.35;word-break:break-word}
+    .summaryValue.mono{font-size:13px}
+    .summaryWide{grid-column:1 / -1}
+    .summaryInterfaces{margin:0;white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f9fbfe;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:240px;overflow:auto}
+    @media (max-width:900px){
+      .summaryGrid{grid-template-columns:1fr}
+      .summaryList{grid-template-columns:1fr}
+      .summaryHero{flex-direction:column}
+    }
+
   </style>
 </head>
 <body>
 <div class="wrap">
   <div class="top">
     <div>
-      <div class="muted small">TLSCTRL WEB</div>
-      <h1>Отдельная web-админка</h1>
-      <div class="muted">Старый web-интерфейс, адаптированный под новую GovPP/plugin-структуру: профили, пользователи, sync и честные статусы</div>
-    </div>
+      <div class="muted small">ZTNA / администрирование доступа</div>
+      <h1>ZTNA Экран-М</h1>
+          </div>
     <div class="card small">
       <div><b>API base:</b> <span class="mono" id="apiBaseText">http://127.0.0.1:9080</span></div>
-      <div><b>Клиент подключается:</b> <span class="mono">к mTLS API на :9443</span></div>
+      <div class="topMeta">
+        <span id="healthPill" class="healthPill warn">Agent health: — <span id="healthInfo" class="infoDot" title="Проверьте /healthz">i</span></span>
+        <span><b>Клиент подключается:</b> <span class="mono">к mTLS API на :9443</span></span>
+      </div>
     </div>
   </div>
 
@@ -78,6 +130,8 @@
       <div><button type="button" id="btnApplyApi">Применить</button></div>
     </div>
   </div>
+
+  <div id="healthMeta" style="display:none"></div>
 
   <div class="tabs">
     <button type="button" class="tabBtn active" data-tab="settings">Настройки TLS</button>
@@ -141,11 +195,6 @@
   </div>
 
   <div class="grid4">
-    <div class="card">
-      <div class="muted tiny">Agent health</div>
-      <div id="healthStatus" style="font-weight:800;margin-top:6px">—</div>
-      <div class="muted small" id="healthMeta" style="margin-top:6px">—</div>
-    </div>
     <div class="card">
       <div class="muted tiny">Client public URL</div>
       <div id="kpiClientUrl" class="mono small" style="margin-top:6px">—</div>
@@ -216,7 +265,7 @@
       <table>
         <thead>
           <tr>
-            <th>Статус</th><th>Учетная запись</th><th>Профиль</th><th>IP</th><th>MAC</th><th>Пользователь ОС</th><th>Тип ОС</th><th>Версия ОС</th><th>Кол-во приложений</th><th>Последняя активность</th><th>Действия</th>
+            <th class="statusCol">Статус</th><th>Учетная запись</th><th>Профиль</th><th>IP</th><th>MAC</th><th>Пользователь ОС</th><th>Тип ОС</th><th>Версия ОС</th><th>Кол-во приложений</th><th>Последняя активность</th><th>Действия</th>
           </tr>
         </thead>
         <tbody id="rows"><tr><td colspan="11" class="muted">Нет данных</td></tr></tbody>
@@ -227,25 +276,112 @@
   </div>
 </div>
 
+
 <div class="modalBg" id="infoBg">
-  <div class="modal">
+  <div class="modal" style="width:min(980px,100%)">
     <div class="titleBar"><div style="font-weight:800">Сводная информация</div><button type="button" id="btnCloseInfo">Закрыть</button></div>
-    <div class="splitInfo">
-      <div class="kv"><div class="k">Учетная запись</div><div class="v" id="infoUsername">—</div></div>
-      <div class="kv"><div class="k">Статус</div><div class="v" id="infoStatus">—</div></div>
-      <div class="kv"><div class="k">IP</div><div class="v mono" id="infoIP">—</div></div>
-      <div class="kv"><div class="k">MAC</div><div class="v mono" id="infoMAC">—</div></div>
-      <div class="kv"><div class="k">Пользователь ОС</div><div class="v" id="infoSystemUser">—</div></div>
-      <div class="kv"><div class="k">Тип ОС</div><div class="v" id="infoOSName">—</div></div>
-      <div class="kv"><div class="k">Версия ОС</div><div class="v" id="infoOSVersion">—</div></div>
-      <div class="kv"><div class="k">Аптайм системы</div><div class="v" id="infoSystemUptime">—</div></div>
-      <div class="kv"><div class="k">Подключен с</div><div class="v" id="infoConnectedAt">—</div></div>
-      <div class="kv"><div class="k">Последняя активность</div><div class="v" id="infoLastSeen">—</div></div>
-      <div class="kv"><div class="k">Cert serial</div><div class="v mono" id="infoCertSerial">—</div></div>
-      <div class="kv"><div class="k">Источник</div><div class="v" id="infoSource">—</div></div>
-      <div class="kv"><div class="k">Приложений</div><div class="v" id="infoAppsCount">—</div></div>
-      <div class="kv"><div class="k">Отчёт по приложениям</div><div class="v" id="infoAppsUpdatedAt">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">Интерфейсы</div><div class="v"><pre id="infoInterfaces" style="margin:0;white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">—</pre></div></div>
+    <div class="summaryShell">
+      <div class="summaryHero">
+        <div class="summaryHeroTitle">
+          <div class="muted small">Пользователь</div>
+          <div class="summaryUser" id="infoUsername">—</div>
+          <div class="summaryMeta">
+            <span class="pill pillMute" id="infoProfilePill">Профиль: —</span>
+            <span class="pill pillMute" id="infoSourcePill">Источник: —</span>
+          </div>
+        </div>
+        <div id="infoStatus" class="statusIcons"></div>
+      </div>
+
+      <div class="summaryGrid">
+        <section class="summarySection">
+          <div class="summarySectionHead">Сетевые данные</div>
+          <div class="summarySectionBody summaryList">
+            <div class="summaryField">
+              <div class="summaryLabel">IP-адрес</div>
+              <div class="summaryValue mono" id="infoIP">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">MAC-адрес</div>
+              <div class="summaryValue mono" id="infoMAC">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Пользователь ОС</div>
+              <div class="summaryValue" id="infoSystemUser">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Источник</div>
+              <div class="summaryValue" id="infoSource">—</div>
+            </div>
+            <div class="summaryField summaryWide">
+              <div class="summaryLabel">Интерфейсы клиента</div>
+              <pre id="infoInterfaces" class="summaryInterfaces">—</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="summarySection">
+          <div class="summarySectionHead">Система и активность</div>
+          <div class="summarySectionBody summaryList">
+            <div class="summaryField">
+              <div class="summaryLabel">Тип ОС</div>
+              <div class="summaryValue" id="infoOSName">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Версия ОС</div>
+              <div class="summaryValue" id="infoOSVersion">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Аптайм системы</div>
+              <div class="summaryValue" id="infoSystemUptime">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Подключен с</div>
+              <div class="summaryValue" id="infoConnectedAt">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Последняя активность</div>
+              <div class="summaryValue" id="infoLastSeen">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Отчёт по приложениям</div>
+              <div class="summaryValue" id="infoAppsUpdatedAt">—</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="summarySection">
+          <div class="summarySectionHead">Учётные данные и сертификат</div>
+          <div class="summarySectionBody summaryList">
+            <div class="summaryField">
+              <div class="summaryLabel">Учётная запись</div>
+              <div class="summaryValue" id="infoUsername2">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Профиль</div>
+              <div class="summaryValue" id="infoProfileText">—</div>
+            </div>
+            <div class="summaryField summaryWide">
+              <div class="summaryLabel">Cert serial</div>
+              <div class="summaryValue mono" id="infoCertSerial">—</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="summarySection">
+          <div class="summarySectionHead">Приложения</div>
+          <div class="summarySectionBody summaryList">
+            <div class="summaryField">
+              <div class="summaryLabel">Количество приложений</div>
+              <div class="summaryValue" id="infoAppsCount">—</div>
+            </div>
+            <div class="summaryField">
+              <div class="summaryLabel">Статус runtime</div>
+              <div class="summaryValue" id="infoRuntimeText">—</div>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 </div>
@@ -268,9 +404,9 @@
       </div>
       <div class="field" style="max-width:240px">
         <label>Статус</label>
-        <input id="appsStatus" readonly /></div>
-      <div><button type="button" id="btnAppsRefresh">Обновить список</button></div>
+        <input id="appsStatus" readonly />
       </div>
+      <div><button type="button" id="btnAppsRefresh">Обновить список</button></div>
     </div>
     <div class="tableWrap" style="max-height:52vh">
       <table>
@@ -328,6 +464,8 @@
     </div>
   </div>
 </div>
+
+<div class="floatingMenu" id="userActionMenu"></div>
 
 <script src="./app.js"></script>
 

@@ -90,8 +90,45 @@ function profileBadge(row) {
   return stateIcon('stateWarn', 'P', 'Профиль не назначен');
 }
 function runtimeHintBadge(row) {
-  if (row.connected) return stateIcon('stateInfo', 'R', 'Runtime активен по agent session');
-  return stateIcon('stateOff', 'R', 'Runtime не подтверждён agent session');
+  if (row.connected) return stateIcon('stateInfo', 'R', 'Runtime подтверждён');
+  return stateIcon('stateOff', 'R', 'Runtime не подтверждён');
+}
+function buildUserMenu(username, enabled) {
+  return [
+    `<button class="menuItem" data-action="cert" data-user="${esc(username)}">📜 Параметры сертификата</button>`,
+    `<button class="menuItem" data-action="bundle" data-user="${esc(username)}">📦 Скачать bundle</button>`,
+    `<button class="menuItem" data-action="reissuebundle" data-user="${esc(username)}">🔐 Перевыпустить bundle</button>`,
+    '<div class="menuDivider"></div>',
+    `<button class="menuItem" data-action="disconnect" data-user="${esc(username)}">⛔ Разорвать сессию</button>`,
+    (enabled
+      ? `<button class="menuItem" data-action="disableuser" data-user="${esc(username)}">🔒 Заблокировать пользователя</button>`
+      : `<button class="menuItem" data-action="enableuser" data-user="${esc(username)}">🔓 Разблокировать пользователя</button>`),
+    `<button class="menuItem" data-action="delete" data-user="${esc(username)}">🗑️ Удалить пользователя</button>`
+  ].join('');
+}
+function closeFloatingMenu() {
+  const menu = byId('userActionMenu');
+  if (!menu) return;
+  menu.classList.remove('open');
+  menu.innerHTML = '';
+  menu.removeAttribute('data-user');
+}
+function openFloatingMenu(anchor, username, enabled) {
+  const menu = byId('userActionMenu');
+  if (!menu || !anchor) return;
+  menu.innerHTML = buildUserMenu(username, enabled);
+  menu.classList.add('open');
+  menu.dataset.user = username;
+  menu.style.left = '8px';
+  menu.style.top = '8px';
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let left = rect.right - menuRect.width;
+  if (left < 8) left = 8;
+  let top = rect.bottom + 8;
+  if (top + menuRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - menuRect.height - 8);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
 }
 async function jget(path) {
   const r = await fetch(normalizeBase(API_BASE) + path, { cache: 'no-store' });
@@ -198,10 +235,14 @@ function updateHistory(rows) {
   setReasonStore(reasons);
 }
 function renderHealth() {
-  if (!byId('healthStatus')) return;
   const ok = !!healthData?.ok;
-  byId('healthStatus').innerHTML = ok ? pill('ok', 'Agent доступен') : pill('warn', 'Health недоступен');
-  byId('healthMeta').textContent = healthData ? JSON.stringify(healthData) : 'Проверьте /healthz';
+  const healthMetaText = healthData ? JSON.stringify(healthData) : 'Проверьте /healthz';
+  if (byId('healthMeta')) byId('healthMeta').textContent = healthMetaText;
+  if (byId('healthPill')) {
+    byId('healthPill').className = 'healthPill ' + (ok ? 'ok' : 'warn');
+    byId('healthPill').childNodes[0].textContent = 'Agent health: ' + (ok ? 'доступен ' : 'недоступен ');
+  }
+  if (byId('healthInfo')) byId('healthInfo').title = healthMetaText;
   if (byId('kpiClientUrl')) byId('kpiClientUrl').textContent = byId('clientPublicURL')?.value?.trim() || '—';
   if (byId('kpiServerName')) {
     const serverName = byId('serverName')?.value?.trim();
@@ -263,16 +304,9 @@ function renderUsers() {
       `<td>${esc(fmtDate(r.last_seen || r.user_last_seen))}</td>` +
       '<td><div class="actions">' +
         `<button class="iconBtn" data-action="info" data-user="${esc(r.username)}" title="Сводная информация">ℹ️</button>` +
-        `<button class="iconBtn" data-action="roadmap" data-user="${esc(r.username)}" title="Сессии подключений">🗺️</button>` +
-        `<button class="iconBtn" data-action="cert" data-user="${esc(r.username)}" title="Параметры сертификата">📜</button>` +
-        `<button class="iconBtn" data-action="apps" data-user="${esc(r.username)}" title="Запросить и показать приложения">🖥️</button>` +
-        `<button class="iconBtn" data-action="bundle" data-user="${esc(r.username)}" title="Скачать bundle">📦</button>` +
-        `<button class="iconBtn" data-action="reissuebundle" data-user="${esc(r.username)}" title="Перевыпустить bundle">🔐</button>` +
-        `<button class="iconBtn" data-action="disconnect" data-user="${esc(r.username)}" title="Отключить session агента">⛔</button>` +
-        (r.enabled
-          ? `<button class="iconBtn" data-action="disableuser" data-user="${esc(r.username)}" title="Заблокировать пользователя">🔒</button>`
-          : `<button class="iconBtn" data-action="enableuser" data-user="${esc(r.username)}" title="Разблокировать пользователя">🔓</button>`) +
-        `<button class="iconBtn" data-action="delete" data-user="${esc(r.username)}" title="Удалить пользователя">🗑️</button>` +
+        `<button class="iconBtn" data-action="roadmap" data-user="${esc(r.username)}" title="Сессии подключений">🧭</button>` +
+        `<button class="iconBtn" data-action="apps" data-user="${esc(r.username)}" title="Приложения">🖥️</button>` +
+        `<button class="iconBtn" data-action="menu" data-user="${esc(r.username)}" data-enabled="${r.enabled ? 'true' : 'false'}" title="Ещё действия">⋯</button>` +
       '</div></td>' +
     '</tr>'
   )).join('');
@@ -297,8 +331,14 @@ function fillProfileForm(profile) {
 function openInfo(username) {
   const row = mergedRows().find(x => x.username === username);
   if (!row) return;
+  const profileText = row.profile || 'Без профиля';
   byId('infoUsername').textContent = row.username || '—';
+  if (byId('infoUsername2')) byId('infoUsername2').textContent = row.username || '—';
   byId('infoStatus').innerHTML = `<div class="statusIcons">${accountBadge(row)}${sessionBadge(row)}${profileBadge(row)}${runtimeHintBadge(row)}</div>`;
+  if (byId('infoProfilePill')) byId('infoProfilePill').textContent = `Профиль: ${profileText}`;
+  if (byId('infoSourcePill')) byId('infoSourcePill').textContent = `Источник: ${row.source || '—'}`;
+  if (byId('infoProfileText')) byId('infoProfileText').textContent = profileText;
+  if (byId('infoRuntimeText')) byId('infoRuntimeText').textContent = row.connected ? 'Подтверждён по session API' : 'Не подтверждён';
   byId('infoIP').textContent = row.ip || '—';
   byId('infoMAC').textContent = row.mac || '—';
   byId('infoSystemUser').textContent = row.system_user || '—';
@@ -544,11 +584,23 @@ function profilePayloadFromForm() {
 
 
 document.addEventListener('click', async (e) => {
+  const menuBtn = e.target.closest('button[data-action="menu"]');
+  if (menuBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const user = menuBtn.getAttribute('data-user') || '';
+    const enabled = menuBtn.getAttribute('data-enabled') === 'true';
+    const menu = byId('userActionMenu');
+    if (menu && menu.classList.contains('open') && menu.dataset.user === user) closeFloatingMenu();
+    else openFloatingMenu(menuBtn, user, enabled);
+    return;
+  }
   const btn = e.target.closest('button[data-action]');
-  if (!btn) return;
+  if (!btn) { closeFloatingMenu(); return; }
   const user = btn.getAttribute('data-user') || '';
   const pname = btn.getAttribute('data-pname') || '';
   const action = btn.getAttribute('data-action');
+  if (action !== 'menu') closeFloatingMenu();
   if (action === 'info') openInfo(user);
   if (action === 'roadmap') openRoadmap(user);
   if (action === 'cert') await openCert(user);
@@ -629,6 +681,25 @@ Promise.all([loadSettings().catch(() => {}), loadAll().catch(console.error)]).th
 setInterval(() => { loadAll().catch(() => {}); }, 3000);
 
 if (byId('btnOpenProfileModal')) byId('btnOpenProfileModal').addEventListener('click', () => { resetProfileForm(); openProfileModal(false); });
-if (byId('btnCloseProfileModal')) byId('btnCloseProfileModal').addEventListener('click', closeProfileModal);
+if (byId('btnCloseProfileModal')) byId('btnCloseProfileModal').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closeProfileModal(); });
+if (byId('profileBg')) {
+  byId('profileBg').addEventListener('click', (e) => {
+    if (e.target === byId('profileBg')) closeProfileModal();
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && byId('profileBg') && byId('profileBg').style.display === 'flex') closeProfileModal();
+});
+document.addEventListener('click', (e) => {
+  const closeBtn = e.target && e.target.closest ? e.target.closest('#btnCloseProfileModal') : null;
+  if (closeBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeProfileModal();
+  }
+});
 if (byId('btnAppsRefresh')) byId('btnAppsRefresh').addEventListener('click', () => { requestAppsRefresh().catch(e => alert('Не удалось обновить список приложений: ' + (e?.message || e))); });
 Array.from(document.querySelectorAll('.tabBtn')).forEach((btn) => btn.addEventListener('click', () => { const tab = btn.getAttribute('data-tab'); document.querySelectorAll('.tabBtn').forEach(x => x.classList.toggle('active', x === btn)); document.querySelectorAll('.tabPanel').forEach(p => p.classList.toggle('active', p.getAttribute('data-panel') === tab)); }));
+
+window.addEventListener("resize", closeFloatingMenu);
+window.addEventListener("scroll", closeFloatingMenu, true);
