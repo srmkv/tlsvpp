@@ -31,10 +31,156 @@ function resolveInitialApiBase() {
 let API_BASE = resolveInitialApiBase();
 let appsPollTimer = null;
 let appsState = { username: '', pending: false, report: null };
+
+const FORBIDDEN_STORAGE_KEY = 'tlsctrl_forbidden_apps_v4';
+const FORBIDDEN_PRESETS = [
+  { id:'vpn', title:'VPN / туннели', pattern:'vpn|openvpn|wireguard|wg|forticlient|fortivpn|forti vpn|anyconnect|cisco secure client|cisco vpn|globalprotect|pulse secure|juniper secure connect|nordvpn|protonvpn|outline|amnezia|tailscale|zerotier|softether|sstp|l2tp|ipsec|warp' },
+  { id:'mattermost', title:'Mattermost', pattern:'mattermost' },
+  { id:'telegram', title:'Telegram', pattern:'telegram' },
+  { id:'whatsapp', title:'WhatsApp', pattern:'whatsapp' },
+  { id:'zoom', title:'Zoom', pattern:'zoom' },
+  { id:'anydesk', title:'AnyDesk', pattern:'anydesk' },
+  { id:'teamviewer', title:'TeamViewer', pattern:'teamviewer' },
+  { id:'rustdesk', title:'RustDesk', pattern:'rustdesk' },
+  { id:'radmin', title:'Radmin', pattern:'radmin' },
+  { id:'rdp', title:'RDP / mstsc', pattern:'mstsc|remote desktop|rdp' },
+  { id:'ssh', title:'SSH / PuTTY', pattern:'putty|ssh' },
+  { id:'warp', title:'Cloudflare WARP', pattern:'warp|cloudflare warp' },
+  { id:'proxy', title:'Прокси / proxy', pattern:'proxy|socks|http proxy' },
+];
+let forbiddenState = loadForbiddenState();
 const HISTORY_KEY = 'tlsctrl_session_history_v10';
 const DISCONNECT_REASON_KEY = 'tlsctrl_disconnect_reason_v10';
 
 function loadJSON(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
+
+function loadForbiddenState() {
+  const fallback = { pattern: '', mode: 'smart', ignoreCase: true, selectedPresets: [] };
+  const raw = loadJSON(FORBIDDEN_STORAGE_KEY, fallback) || fallback;
+  return {
+    pattern: typeof raw.pattern === 'string' ? raw.pattern : '',
+    mode: raw.mode === 'regex' ? 'regex' : 'smart',
+    ignoreCase: raw.ignoreCase !== false,
+    selectedPresets: Array.isArray(raw.selectedPresets) ? raw.selectedPresets.filter(Boolean) : []
+  };
+}
+function saveForbiddenState() {
+  saveJSON(FORBIDDEN_STORAGE_KEY, forbiddenState);
+}
+function syncForbiddenControls() {
+  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = forbiddenState.pattern || '';
+  if (byId('forbiddenMode')) byId('forbiddenMode').value = forbiddenState.mode || 'smart';
+  if (byId('forbiddenIgnoreCase')) byId('forbiddenIgnoreCase').checked = forbiddenState.ignoreCase !== false;
+  renderForbiddenPresets();
+  updateForbiddenStats(0, 0, 0);
+}
+function openForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'flex'; }
+function closeForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'none'; }
+function applyForbiddenForm() {
+  forbiddenState.pattern = byId('forbiddenPattern') ? (byId('forbiddenPattern').value || '').trim() : '';
+  forbiddenState.mode = byId('forbiddenMode') ? (byId('forbiddenMode').value === 'regex' ? 'regex' : 'smart') : 'smart';
+  forbiddenState.ignoreCase = !!(byId('forbiddenIgnoreCase') && byId('forbiddenIgnoreCase').checked);
+  saveForbiddenState();
+}
+function resetForbiddenForm() {
+  forbiddenState = { pattern: '', mode: 'smart', ignoreCase: true, selectedPresets: [] };
+  saveForbiddenState();
+  syncForbiddenControls();
+  updateForbiddenStats(0, 0, 0);
+  renderAppsView();
+}
+function escapeRegex(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function smartTokenToRegex(token) {
+  const t = String(token || '').trim();
+  if (!t) return '';
+  let out = '';
+  for (const ch of t) {
+    if (ch === '*') out += '.*';
+    else out += escapeRegex(ch);
+  }
+  return out;
+}
+function buildForbiddenRegex(pattern, mode, ignoreCase) {
+  const source = String(pattern || '').trim();
+  if (!source) return null;
+  const flags = ignoreCase ? 'i' : '';
+  if (mode === 'regex') return new RegExp(source, flags);
+  const parts = source.split('|').map(s => s.trim()).filter(Boolean).map(smartTokenToRegex).filter(Boolean);
+  if (!parts.length) return null;
+  return new RegExp(parts.join('|'), flags);
+}
+function highlightMatch(value, regex) {
+  const text = String(value ?? '');
+  if (!regex || !text) return esc(text || '—');
+  const flags = regex.flags.includes('g') ? regex.flags : regex.flags + 'g';
+  const re = new RegExp(regex.source, flags);
+  let result = '';
+  let last = 0;
+  let hadMatch = false;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    hadMatch = true;
+    const idx = m.index;
+    const found = m[0] || '';
+    result += esc(text.slice(last, idx));
+    result += '<mark class="appForbiddenMark">' + esc(found) + '</mark>';
+    last = idx + found.length;
+    if (found.length === 0) {
+      re.lastIndex += 1;
+    }
+  }
+  if (!hadMatch) return esc(text || '—');
+  result += esc(text.slice(last));
+  return result;
+}
+function updateForbiddenStats(total, visible, matched) {
+  if (byId('forbiddenCount')) byId('forbiddenCount').textContent = String(matched || 0);
+  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
+}
+function getPresetById(id) {
+  return FORBIDDEN_PRESETS.find(x => x.id === id) || null;
+}
+function collectSelectedPresetPatterns() {
+  return forbiddenState.selectedPresets.map(getPresetById).filter(Boolean).map(x => x.pattern).filter(Boolean);
+}
+function renderForbiddenPresets() {
+  const host = byId('forbiddenPresetList');
+  if (!host) return;
+  host.innerHTML = FORBIDDEN_PRESETS.map((preset) => {
+    const selected = forbiddenState.selectedPresets.includes(preset.id);
+    return `
+      <label class="forbiddenOption${selected ? ' forbiddenOptionSelected is-selected' : ''}">
+        <input type="checkbox" data-forbidden-preset="${esc(preset.id)}" ${selected ? 'checked' : ''} />
+        <span>
+          <span class="forbiddenOptionTitle">${esc(preset.title)}</span>
+          <span class="forbiddenOptionPattern">${esc(preset.pattern)}</span>
+        </span>
+      </label>`;
+  }).join('');
+  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
+}
+function mergePatternParts(parts) {
+  return parts.map(s => String(s || '').trim()).filter(Boolean).filter((s, i, arr) => arr.indexOf(s) === i).join('|');
+}
+function appendPatternFromSelection() {
+  const parts = [];
+  const current = byId('forbiddenPattern') ? byId('forbiddenPattern').value.trim() : '';
+  if (current) parts.push(current);
+  parts.push(...collectSelectedPresetPatterns());
+  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = mergePatternParts(parts);
+  if (byId('forbiddenMode')) byId('forbiddenMode').value = 'regex';
+  applyForbiddenForm();
+  renderAppsView();
+}
+function replacePatternFromSelection() {
+  const merged = mergePatternParts(collectSelectedPresetPatterns());
+  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = merged;
+  if (byId('forbiddenMode')) byId('forbiddenMode').value = 'regex';
+  applyForbiddenForm();
+  renderAppsView();
+}
 function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
 function getHistoryStore() { return loadJSON(HISTORY_KEY, {}); }
 function setHistoryStore(value) { saveJSON(HISTORY_KEY, value); }
@@ -514,11 +660,16 @@ function renderAppsView() {
   const statusInput = byId('appsStatus'); const rowsEl = byId('appsRows'); const categoryEl = byId('appsCategory');
   const searchValue = (byId('appsSearch').value || '').trim().toLowerCase();
   const categoryValue = categoryEl.value || ''; const report = appsState.report; const pending = !!appsState.pending;
-  let apps = report && Array.isArray(report.apps) ? report.apps.slice() : [];
+  const allApps = report && Array.isArray(report.apps) ? report.apps.slice() : [];
+  let apps = allApps.slice();
   const categories = Array.from(new Set(apps.map(x => x.category || 'Другое'))).sort((a, b) => a.localeCompare(b, 'ru'));
   const currentCategory = categoryEl.value;
   categoryEl.innerHTML = '<option value="">Все категории</option>' + categories.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
   if (categories.includes(currentCategory)) categoryEl.value = currentCategory;
+  applyForbiddenForm();
+  let forbiddenRegex = null;
+  let invalidForbidden = '';
+  try { forbiddenRegex = buildForbiddenRegex(forbiddenState.pattern, forbiddenState.mode, forbiddenState.ignoreCase); } catch (e) { invalidForbidden = e?.message || 'Некорректное выражение'; }
   apps = apps.filter(app => {
     const cat = app.category || 'Другое';
     if (categoryValue && cat !== categoryValue) return false;
@@ -527,12 +678,27 @@ function renderAppsView() {
     return hay.includes(searchValue);
   });
   let statusText = 'Нет данных';
-  if (pending && report) statusText = 'Ожидается свежий ответ клиента. Последний отчёт: ' + fmtDate(report.generated_at);
+  if (invalidForbidden) statusText = 'Ошибка шаблона: ' + invalidForbidden;
+  else if (pending && report) statusText = 'Ожидается свежий ответ клиента. Последний отчёт: ' + fmtDate(report.generated_at);
   else if (pending) statusText = 'Запрос отправлен. Ожидается ответ клиента…';
   else if (report) statusText = 'Последний отчёт: ' + fmtDate(report.generated_at) + ', приложений: ' + ((report.apps || []).length);
   statusInput.value = statusText;
+  const matchFn = (app) => !!(forbiddenRegex && forbiddenRegex.test([app.name, app.category, app.pid, app.uptime, app.exe].join(' ')));
+  const totalMatched = allApps.filter(matchFn).length;
+  const visibleMatched = apps.filter(matchFn).length;
+  updateForbiddenStats(allApps.length, apps.length, visibleMatched);
   if (!apps.length) { rowsEl.innerHTML = '<tr><td colspan="5" class="muted">Нет данных</td></tr>'; return; }
-  rowsEl.innerHTML = apps.map(app => '<tr>' + `<td>${esc(app.name || '—')}</td><td>${esc(app.category || 'Другое')}</td><td class="mono">${esc(String(app.pid ?? '—'))}</td><td>${esc(app.uptime || '—')}</td><td class="mono">${esc(app.exe || '—')}</td>` + '</tr>').join('');
+  rowsEl.innerHTML = apps.map(app => {
+    const matched = !invalidForbidden && matchFn(app);
+    const cls = matched ? ' class="appForbiddenCell"' : '';
+    const nameHtml = highlightMatch(app.name || '—', matched ? forbiddenRegex : null) + (matched ? '<span class="appForbiddenBadge">запрещено</span>' : '');
+    const catHtml = highlightMatch(app.category || 'Другое', matched ? forbiddenRegex : null);
+    const pidHtml = highlightMatch(String(app.pid ?? '—'), matched ? forbiddenRegex : null);
+    const uptimeHtml = highlightMatch(app.uptime || '—', matched ? forbiddenRegex : null);
+    const exeHtml = highlightMatch(app.exe || '—', matched ? forbiddenRegex : null);
+    return '<tr>' + `<td${cls}>${nameHtml}</td><td${cls}>${catHtml}</td><td class="mono"${cls}>${pidHtml}</td><td${cls}>${uptimeHtml}</td><td class="mono"${cls}>${exeHtml}</td>` + '</tr>';
+  }).join('');
+  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
 }
 async function loadAppsView(username) {
   const view = await jget('/api/admin/users/apps?username=' + encodeURIComponent(username));
@@ -555,6 +721,8 @@ async function openApps(username) {
   byId('appsCategory').innerHTML = '<option value="">Все категории</option>';
   byId('appsRows').innerHTML = '<tr><td colspan="5" class="muted">Нажмите «Обновить список», чтобы запросить приложения у клиента.</td></tr>';
   byId('appsStatus').value = 'Список ещё не запрашивался';
+  syncForbiddenControls();
+  updateForbiddenStats(0, 0, 0);
   byId('appsBg').style.display = 'flex';
   if (appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; }
   try { await loadAppsView(username); } catch (_) {}
@@ -675,6 +843,32 @@ if (byId('btnCloseApps')) byId('btnCloseApps').addEventListener('click', closeAp
 if (byId('appsSearch')) byId('appsSearch').addEventListener('input', renderAppsView);
 if (byId('appsCategory')) byId('appsCategory').addEventListener('change', renderAppsView);
 
+if (byId('forbiddenPattern')) byId('forbiddenPattern').addEventListener('input', renderAppsView);
+if (byId('forbiddenMode')) byId('forbiddenMode').addEventListener('change', renderAppsView);
+if (byId('forbiddenIgnoreCase')) byId('forbiddenIgnoreCase').addEventListener('change', renderAppsView);
+if (byId('btnApplyForbidden')) byId('btnApplyForbidden').addEventListener('click', () => { applyForbiddenForm(); renderAppsView(); });
+if (byId('btnResetForbidden')) byId('btnResetForbidden').addEventListener('click', resetForbiddenForm);
+if (byId('btnForbiddenAppend')) byId('btnForbiddenAppend').addEventListener('click', () => { appendPatternFromSelection(); closeForbiddenPresets(); });
+if (byId('btnForbiddenReplace')) byId('btnForbiddenReplace').addEventListener('click', () => { replacePatternFromSelection(); closeForbiddenPresets(); });
+if (byId('btnOpenForbiddenPresets')) byId('btnOpenForbiddenPresets').addEventListener('click', openForbiddenPresets);
+if (byId('btnCloseForbiddenPresets')) byId('btnCloseForbiddenPresets').addEventListener('click', closeForbiddenPresets);
+document.addEventListener('change', (e) => {
+  const cb = e.target && e.target.matches ? e.target.matches('input[data-forbidden-preset]') : false;
+  if (!cb) return;
+  const id = e.target.getAttribute('data-forbidden-preset');
+  if (e.target.checked) {
+    if (!forbiddenState.selectedPresets.includes(id)) forbiddenState.selectedPresets.push(id);
+  } else {
+    forbiddenState.selectedPresets = forbiddenState.selectedPresets.filter(x => x !== id);
+  }
+  saveForbiddenState();
+  renderForbiddenPresets();
+  updateForbiddenStats(0, 0, 0);
+});
+function openForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'flex'; }
+function closeForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'none'; }
+syncForbiddenControls();
+
 localStorage.setItem('tlsctrl_api_base', API_BASE);
 syncApiBaseUI();
 Promise.all([loadSettings().catch(() => {}), loadAll().catch(console.error)]).then(() => renderHealth());
@@ -703,3 +897,5 @@ Array.from(document.querySelectorAll('.tabBtn')).forEach((btn) => btn.addEventLi
 
 window.addEventListener("resize", closeFloatingMenu);
 window.addEventListener("scroll", closeFloatingMenu, true);
+
+if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').addEventListener('click', (e) => { if (e.target === byId('forbiddenPresetsBg')) closeForbiddenPresets(); });

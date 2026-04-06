@@ -77,8 +77,23 @@
     .infoDot{width:20px;height:20px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;font-size:12px;font-weight:800;cursor:help;opacity:.85}
     .tableWrap table{min-width:1200px}
     .statusCol{width:150px}
+    .forbiddenToolbar{display:grid;grid-template-columns:minmax(280px,1.45fr) minmax(180px,.7fr) auto auto auto;gap:12px;align-items:end;margin-bottom:12px}
+    .forbiddenStats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    .forbiddenStat{padding:8px 12px;border-radius:999px;background:#f8fafc;border:1px solid var(--line);font-size:13px;font-weight:700}
+    .forbiddenStat.bad{background:#fff1f2;border-color:#fecdd3;color:#b91c1c}
+    .forbiddenList{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}
+    .forbiddenOption{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:#fff;cursor:pointer;transition:.15s ease}
+    .forbiddenOption:hover{border-color:#f1b8b1;background:#fff7f7}
+    .forbiddenOptionSelected,.forbiddenOption.is-selected{border-color:#dc2626;background:#fee2e2;box-shadow:0 0 0 1px rgba(220,38,38,.06) inset}
+    .forbiddenModalHint{margin:-2px 0 12px;color:var(--muted);font-size:13px}
+    .forbiddenOption input{width:auto;margin-top:3px}
+    .forbiddenOptionTitle{font-size:13px;font-weight:800;line-height:1.2}
+    .forbiddenOptionPattern{font-size:12px;color:var(--muted);line-height:1.35;word-break:break-word}
+    .appForbiddenCell{background:#fee2e2 !important;color:#991b1b;font-weight:700}
+    .appForbiddenBadge{display:inline-flex;align-items:center;justify-content:center;margin-left:8px;padding:2px 8px;border-radius:999px;background:#dc2626;color:#fff;font-size:11px;font-weight:800;vertical-align:middle}
+    .appMatchMark{background:#fecaca;color:#7f1d1d;padding:0 2px;border-radius:4px}
 
-    @media (max-width:1100px){.grid3,.grid4,.grid2{grid-template-columns:1fr}.profileFormGrid{grid-template-columns:1fr}.top{flex-direction:column}.top .card{min-width:unset;width:100%}}
+    @media (max-width:1100px){.grid3,.grid4,.grid2{grid-template-columns:1fr}.profileFormGrid{grid-template-columns:1fr}.top{flex-direction:column}.top .card{min-width:unset;width:100%}.forbiddenToolbar{grid-template-columns:1fr}}
 
   
     .summaryShell{display:flex;flex-direction:column;gap:16px}
@@ -408,6 +423,28 @@
       </div>
       <div><button type="button" id="btnAppsRefresh">Обновить список</button></div>
     </div>
+    <div class="forbiddenToolbar">
+      <div class="field">
+        <label for="forbiddenPattern">Запрещённые приложения: шаблон / regex</label>
+        <input id="forbiddenPattern" placeholder="vpn|mattermost или *VPN*|*mattermost*" />
+      </div>
+      <div class="field">
+        <label for="forbiddenMode">Режим</label>
+        <select id="forbiddenMode">
+          <option value="smart">Умный поиск</option>
+          <option value="regex">Regex</option>
+        </select>
+      </div>
+      <label class="forbiddenOption" style="padding:10px 12px;min-height:42px">
+        <input type="checkbox" id="forbiddenIgnoreCase" checked />
+        <span><span class="forbiddenOptionTitle">Без учёта регистра</span><span class="forbiddenOptionPattern">Регистр букв игнорируется</span></span>
+      </label>
+      <button type="button" id="btnOpenForbiddenPresets">Популярные приложения</button>
+      <button type="button" id="btnResetForbidden">Сбросить</button>
+    </div>
+    <div class="forbiddenStats">
+      <div class="forbiddenStat bad">Заблокировано: <span id="forbiddenCount">0</span></div>
+    </div>
     <div class="tableWrap" style="max-height:52vh">
       <table>
         <thead>
@@ -425,6 +462,23 @@
   </div>
 </div>
 
+<div class="modalBg" id="forbiddenPresetsBg">
+  <div class="modal" style="width:min(920px,96%)">
+    <div class="titleBar">
+      <div style="font-weight:800">Популярные приложения</div>
+      <button type="button" id="btnCloseForbiddenPresets">Закрыть</button>
+    </div>
+    <div class="forbiddenModalHint">Выберите несколько категорий. Отмеченные пункты считаются запрещёнными и могут быть добавлены в текущее выражение.</div>
+    <div class="forbiddenList" id="forbiddenPresetList"></div>
+    <div class="row" style="justify-content:space-between;gap:10px;margin-top:14px">
+      <div class="forbiddenStats"><div class="forbiddenStat bad">Выбрано шаблонов: <span id="forbiddenPresetSelectedCount">0</span></div></div>
+      <div class="actions">
+        <button type="button" id="btnForbiddenAppend">Добавить выбранные</button>
+        <button type="button" id="btnForbiddenReplace">Заменить выбранными</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="modalBg" id="roadmapBg">
   <div class="modal" style="width:min(1100px,100%)">
