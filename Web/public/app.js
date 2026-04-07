@@ -2,7 +2,19 @@ const byId = (id) => document.getElementById(id);
 let users = [];
 let sessions = [];
 let profiles = [];
+let appPolicies = [];
 let healthData = null;
+
+const POLICY_PRESETS = [
+  { id:'vpn_tools', title:'VPN / туннели', meta:'OpenVPN, WireGuard, Forti, AnyConnect, GlobalProtect, WARP', patterns:[
+    {type:'contains',value:'vpn'},{type:'contains',value:'openvpn'},{type:'contains',value:'wireguard'},{type:'contains',value:'wg'},{type:'contains',value:'forticlient'},{type:'contains',value:'fortivpn'},{type:'contains',value:'anyconnect'},{type:'contains',value:'globalprotect'},{type:'contains',value:'pulse secure'},{type:'contains',value:'juniper secure connect'},{type:'contains',value:'tailscale'},{type:'contains',value:'zerotier'},{type:'contains',value:'outline'},{type:'contains',value:'amnezia'},{type:'contains',value:'warp'} ] },
+  { id:'messengers', title:'Мессенджеры', meta:'Mattermost, Telegram, WhatsApp, Discord, Slack', patterns:[
+    {type:'contains',value:'mattermost'},{type:'contains',value:'telegram'},{type:'contains',value:'whatsapp'},{type:'contains',value:'discord'},{type:'contains',value:'slack'} ] },
+  { id:'remote_admin', title:'Удалённый доступ', meta:'AnyDesk, TeamViewer, RustDesk, Radmin, mstsc, PuTTY', patterns:[
+    {type:'contains',value:'anydesk'},{type:'contains',value:'teamviewer'},{type:'contains',value:'rustdesk'},{type:'contains',value:'radmin'},{type:'contains',value:'mstsc'},{type:'contains',value:'putty'},{type:'contains',value:'ssh'} ] },
+  { id:'proxy_tools', title:'Прокси / обход', meta:'Proxy, Psiphon, Lantern, v2ray, clash', patterns:[
+    {type:'contains',value:'proxy'},{type:'contains',value:'psiphon'},{type:'contains',value:'lantern'},{type:'contains',value:'v2ray'},{type:'contains',value:'clash'} ] }
+];
 
 function detectDefaultApiBase() {
   try {
@@ -31,156 +43,10 @@ function resolveInitialApiBase() {
 let API_BASE = resolveInitialApiBase();
 let appsPollTimer = null;
 let appsState = { username: '', pending: false, report: null };
-
-const FORBIDDEN_STORAGE_KEY = 'tlsctrl_forbidden_apps_v4';
-const FORBIDDEN_PRESETS = [
-  { id:'vpn', title:'VPN / туннели', pattern:'vpn|openvpn|wireguard|wg|forticlient|fortivpn|forti vpn|anyconnect|cisco secure client|cisco vpn|globalprotect|pulse secure|juniper secure connect|nordvpn|protonvpn|outline|amnezia|tailscale|zerotier|softether|sstp|l2tp|ipsec|warp' },
-  { id:'mattermost', title:'Mattermost', pattern:'mattermost' },
-  { id:'telegram', title:'Telegram', pattern:'telegram' },
-  { id:'whatsapp', title:'WhatsApp', pattern:'whatsapp' },
-  { id:'zoom', title:'Zoom', pattern:'zoom' },
-  { id:'anydesk', title:'AnyDesk', pattern:'anydesk' },
-  { id:'teamviewer', title:'TeamViewer', pattern:'teamviewer' },
-  { id:'rustdesk', title:'RustDesk', pattern:'rustdesk' },
-  { id:'radmin', title:'Radmin', pattern:'radmin' },
-  { id:'rdp', title:'RDP / mstsc', pattern:'mstsc|remote desktop|rdp' },
-  { id:'ssh', title:'SSH / PuTTY', pattern:'putty|ssh' },
-  { id:'warp', title:'Cloudflare WARP', pattern:'warp|cloudflare warp' },
-  { id:'proxy', title:'Прокси / proxy', pattern:'proxy|socks|http proxy' },
-];
-let forbiddenState = loadForbiddenState();
 const HISTORY_KEY = 'tlsctrl_session_history_v10';
 const DISCONNECT_REASON_KEY = 'tlsctrl_disconnect_reason_v10';
 
 function loadJSON(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
-
-function loadForbiddenState() {
-  const fallback = { pattern: '', mode: 'smart', ignoreCase: true, selectedPresets: [] };
-  const raw = loadJSON(FORBIDDEN_STORAGE_KEY, fallback) || fallback;
-  return {
-    pattern: typeof raw.pattern === 'string' ? raw.pattern : '',
-    mode: raw.mode === 'regex' ? 'regex' : 'smart',
-    ignoreCase: raw.ignoreCase !== false,
-    selectedPresets: Array.isArray(raw.selectedPresets) ? raw.selectedPresets.filter(Boolean) : []
-  };
-}
-function saveForbiddenState() {
-  saveJSON(FORBIDDEN_STORAGE_KEY, forbiddenState);
-}
-function syncForbiddenControls() {
-  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = forbiddenState.pattern || '';
-  if (byId('forbiddenMode')) byId('forbiddenMode').value = forbiddenState.mode || 'smart';
-  if (byId('forbiddenIgnoreCase')) byId('forbiddenIgnoreCase').checked = forbiddenState.ignoreCase !== false;
-  renderForbiddenPresets();
-  updateForbiddenStats(0, 0, 0);
-}
-function openForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'flex'; }
-function closeForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'none'; }
-function applyForbiddenForm() {
-  forbiddenState.pattern = byId('forbiddenPattern') ? (byId('forbiddenPattern').value || '').trim() : '';
-  forbiddenState.mode = byId('forbiddenMode') ? (byId('forbiddenMode').value === 'regex' ? 'regex' : 'smart') : 'smart';
-  forbiddenState.ignoreCase = !!(byId('forbiddenIgnoreCase') && byId('forbiddenIgnoreCase').checked);
-  saveForbiddenState();
-}
-function resetForbiddenForm() {
-  forbiddenState = { pattern: '', mode: 'smart', ignoreCase: true, selectedPresets: [] };
-  saveForbiddenState();
-  syncForbiddenControls();
-  updateForbiddenStats(0, 0, 0);
-  renderAppsView();
-}
-function escapeRegex(s) {
-  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-function smartTokenToRegex(token) {
-  const t = String(token || '').trim();
-  if (!t) return '';
-  let out = '';
-  for (const ch of t) {
-    if (ch === '*') out += '.*';
-    else out += escapeRegex(ch);
-  }
-  return out;
-}
-function buildForbiddenRegex(pattern, mode, ignoreCase) {
-  const source = String(pattern || '').trim();
-  if (!source) return null;
-  const flags = ignoreCase ? 'i' : '';
-  if (mode === 'regex') return new RegExp(source, flags);
-  const parts = source.split('|').map(s => s.trim()).filter(Boolean).map(smartTokenToRegex).filter(Boolean);
-  if (!parts.length) return null;
-  return new RegExp(parts.join('|'), flags);
-}
-function highlightMatch(value, regex) {
-  const text = String(value ?? '');
-  if (!regex || !text) return esc(text || '—');
-  const flags = regex.flags.includes('g') ? regex.flags : regex.flags + 'g';
-  const re = new RegExp(regex.source, flags);
-  let result = '';
-  let last = 0;
-  let hadMatch = false;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    hadMatch = true;
-    const idx = m.index;
-    const found = m[0] || '';
-    result += esc(text.slice(last, idx));
-    result += '<mark class="appForbiddenMark">' + esc(found) + '</mark>';
-    last = idx + found.length;
-    if (found.length === 0) {
-      re.lastIndex += 1;
-    }
-  }
-  if (!hadMatch) return esc(text || '—');
-  result += esc(text.slice(last));
-  return result;
-}
-function updateForbiddenStats(total, visible, matched) {
-  if (byId('forbiddenCount')) byId('forbiddenCount').textContent = String(matched || 0);
-  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
-}
-function getPresetById(id) {
-  return FORBIDDEN_PRESETS.find(x => x.id === id) || null;
-}
-function collectSelectedPresetPatterns() {
-  return forbiddenState.selectedPresets.map(getPresetById).filter(Boolean).map(x => x.pattern).filter(Boolean);
-}
-function renderForbiddenPresets() {
-  const host = byId('forbiddenPresetList');
-  if (!host) return;
-  host.innerHTML = FORBIDDEN_PRESETS.map((preset) => {
-    const selected = forbiddenState.selectedPresets.includes(preset.id);
-    return `
-      <label class="forbiddenOption${selected ? ' forbiddenOptionSelected is-selected' : ''}">
-        <input type="checkbox" data-forbidden-preset="${esc(preset.id)}" ${selected ? 'checked' : ''} />
-        <span>
-          <span class="forbiddenOptionTitle">${esc(preset.title)}</span>
-          <span class="forbiddenOptionPattern">${esc(preset.pattern)}</span>
-        </span>
-      </label>`;
-  }).join('');
-  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
-}
-function mergePatternParts(parts) {
-  return parts.map(s => String(s || '').trim()).filter(Boolean).filter((s, i, arr) => arr.indexOf(s) === i).join('|');
-}
-function appendPatternFromSelection() {
-  const parts = [];
-  const current = byId('forbiddenPattern') ? byId('forbiddenPattern').value.trim() : '';
-  if (current) parts.push(current);
-  parts.push(...collectSelectedPresetPatterns());
-  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = mergePatternParts(parts);
-  if (byId('forbiddenMode')) byId('forbiddenMode').value = 'regex';
-  applyForbiddenForm();
-  renderAppsView();
-}
-function replacePatternFromSelection() {
-  const merged = mergePatternParts(collectSelectedPresetPatterns());
-  if (byId('forbiddenPattern')) byId('forbiddenPattern').value = merged;
-  if (byId('forbiddenMode')) byId('forbiddenMode').value = 'regex';
-  applyForbiddenForm();
-  renderAppsView();
-}
 function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
 function getHistoryStore() { return loadJSON(HISTORY_KEY, {}); }
 function setHistoryStore(value) { saveJSON(HISTORY_KEY, value); }
@@ -308,6 +174,17 @@ async function loadProfiles() {
     profiles = Array.isArray(p.profiles) ? p.profiles : [];
   } catch {
     profiles = [];
+  }
+}
+async function loadPolicies() {
+  try {
+    const p = await jget('/api/admin/app-policies');
+    appPolicies = Array.isArray(p.policies) ? p.policies : [];
+  } catch {
+    appPolicies = [];
+  }
+  if (byId('appsBg') && byId('appsBg').style.display === 'flex' && appsState.username) {
+    renderAppsView();
   }
 }
 function profileNameList() {
@@ -608,9 +485,10 @@ async function loadUsersAndSessions() {
   sessions = Array.isArray(s.sessions) ? s.sessions : [];
 }
 async function loadAll() {
-  await Promise.all([loadUsersAndSessions(), loadProfiles(), loadHealth()]);
+  await Promise.all([loadUsersAndSessions(), loadProfiles(), loadPolicies(), loadHealth()]);
   refreshProfileSelects();
   renderProfiles();
+  renderPolicies();
   renderUsers();
 }
 async function disconnectSession(username) {
@@ -660,16 +538,11 @@ function renderAppsView() {
   const statusInput = byId('appsStatus'); const rowsEl = byId('appsRows'); const categoryEl = byId('appsCategory');
   const searchValue = (byId('appsSearch').value || '').trim().toLowerCase();
   const categoryValue = categoryEl.value || ''; const report = appsState.report; const pending = !!appsState.pending;
-  const allApps = report && Array.isArray(report.apps) ? report.apps.slice() : [];
-  let apps = allApps.slice();
+  let apps = report && Array.isArray(report.apps) ? report.apps.slice() : [];
   const categories = Array.from(new Set(apps.map(x => x.category || 'Другое'))).sort((a, b) => a.localeCompare(b, 'ru'));
   const currentCategory = categoryEl.value;
   categoryEl.innerHTML = '<option value="">Все категории</option>' + categories.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
   if (categories.includes(currentCategory)) categoryEl.value = currentCategory;
-  applyForbiddenForm();
-  let forbiddenRegex = null;
-  let invalidForbidden = '';
-  try { forbiddenRegex = buildForbiddenRegex(forbiddenState.pattern, forbiddenState.mode, forbiddenState.ignoreCase); } catch (e) { invalidForbidden = e?.message || 'Некорректное выражение'; }
   apps = apps.filter(app => {
     const cat = app.category || 'Другое';
     if (categoryValue && cat !== categoryValue) return false;
@@ -677,30 +550,30 @@ function renderAppsView() {
     const hay = [app.name, app.category, app.pid, app.uptime, app.exe].join(' ').toLowerCase();
     return hay.includes(searchValue);
   });
+  const decorated = apps.map((app) => ({ app, policyMatches: getPolicyMatchesForApp(app, appsState.username) }));
+  const forbiddenCount = decorated.filter((x) => x.policyMatches.length > 0).length;
   let statusText = 'Нет данных';
-  if (invalidForbidden) statusText = 'Ошибка шаблона: ' + invalidForbidden;
-  else if (pending && report) statusText = 'Ожидается свежий ответ клиента. Последний отчёт: ' + fmtDate(report.generated_at);
+  if (pending && report) statusText = 'Ожидается свежий ответ клиента. Последний отчёт: ' + fmtDate(report.generated_at);
   else if (pending) statusText = 'Запрос отправлен. Ожидается ответ клиента…';
-  else if (report) statusText = 'Последний отчёт: ' + fmtDate(report.generated_at) + ', приложений: ' + ((report.apps || []).length);
+  else if (report) statusText = 'Последний отчёт: ' + fmtDate(report.generated_at) + ', приложений: ' + ((report.apps || []).length) + ', запрещённых: ' + forbiddenCount + ((appPolicies || []).length ? '' : ' · политики не загружены');
   statusInput.value = statusText;
-  const matchFn = (app) => !!(forbiddenRegex && forbiddenRegex.test([app.name, app.category, app.pid, app.uptime, app.exe].join(' ')));
-  const totalMatched = allApps.filter(matchFn).length;
-  const visibleMatched = apps.filter(matchFn).length;
-  updateForbiddenStats(allApps.length, apps.length, visibleMatched);
-  if (!apps.length) { rowsEl.innerHTML = '<tr><td colspan="5" class="muted">Нет данных</td></tr>'; return; }
-  rowsEl.innerHTML = apps.map(app => {
-    const matched = !invalidForbidden && matchFn(app);
-    const cls = matched ? ' class="appForbiddenCell"' : '';
-    const nameHtml = highlightMatch(app.name || '—', matched ? forbiddenRegex : null) + (matched ? '<span class="appForbiddenBadge">запрещено</span>' : '');
-    const catHtml = highlightMatch(app.category || 'Другое', matched ? forbiddenRegex : null);
-    const pidHtml = highlightMatch(String(app.pid ?? '—'), matched ? forbiddenRegex : null);
-    const uptimeHtml = highlightMatch(app.uptime || '—', matched ? forbiddenRegex : null);
-    const exeHtml = highlightMatch(app.exe || '—', matched ? forbiddenRegex : null);
-    return '<tr>' + `<td${cls}>${nameHtml}</td><td${cls}>${catHtml}</td><td class="mono"${cls}>${pidHtml}</td><td${cls}>${uptimeHtml}</td><td class="mono"${cls}>${exeHtml}</td>` + '</tr>';
+  if (!decorated.length) { rowsEl.innerHTML = '<tr><td colspan="6" class="muted">Нет данных</td></tr>'; return; }
+  rowsEl.innerHTML = decorated.map(({ app, policyMatches }) => {
+    const forbidden = policyMatches.length > 0;
+    const policyText = forbidden
+      ? policyMatches.map((m) => '<div><span class="pill pillBad">Запрещено</span> <b>' + esc(m.name) + '</b><div class="muted small mono">' + esc(m.matchedPatterns.join(', ')) + '</div></div>').join('')
+      : '<span class="muted">—</span>';
+    const rowClass = forbidden ? ' class="appDeniedRow"' : '';
+    const nameCell = forbidden
+      ? '<div><b>' + esc(app.name || '—') + '</b><div class="muted small">Совпадение с политикой доступа</div></div>'
+      : esc(app.name || '—');
+    return '<tr' + rowClass + '>' +
+      `<td>${nameCell}</td><td>${esc(app.category || 'Другое')}</td><td class="mono">${esc(String(app.pid ?? '—'))}</td><td>${esc(app.uptime || '—')}</td><td class="mono">${esc(app.exe || '—')}</td><td>${policyText}</td>` +
+      '</tr>';
   }).join('');
-  if (byId('forbiddenPresetSelectedCount')) byId('forbiddenPresetSelectedCount').textContent = String((forbiddenState.selectedPresets || []).length);
 }
 async function loadAppsView(username) {
+  await loadPolicies().catch(() => {});
   const view = await jget('/api/admin/users/apps?username=' + encodeURIComponent(username));
   appsState = { username, pending: !!view.pending, report: view.report || null };
   renderAppsView();
@@ -708,6 +581,7 @@ async function loadAppsView(username) {
 }
 async function requestAppsRefresh() {
   if (!appsState.username) return;
+  await loadPolicies().catch(() => {});
   byId('appsStatus').value = 'Запрашиваем свежий список…';
   await jpost('/api/admin/users/request-apps', { username: appsState.username });
   if (appsPollTimer) clearInterval(appsPollTimer);
@@ -715,14 +589,13 @@ async function requestAppsRefresh() {
   await loadAppsView(appsState.username);
 }
 async function openApps(username) {
+  await loadPolicies().catch(() => {});
   appsState = { username, pending: false, report: null };
   byId('appsUsername').textContent = username || '—';
   byId('appsSearch').value = '';
   byId('appsCategory').innerHTML = '<option value="">Все категории</option>';
-  byId('appsRows').innerHTML = '<tr><td colspan="5" class="muted">Нажмите «Обновить список», чтобы запросить приложения у клиента.</td></tr>';
+  byId('appsRows').innerHTML = '<tr><td colspan="6" class="muted">Нажмите «Обновить список», чтобы запросить приложения у клиента.</td></tr>'; 
   byId('appsStatus').value = 'Список ещё не запрашивался';
-  syncForbiddenControls();
-  updateForbiddenStats(0, 0, 0);
   byId('appsBg').style.display = 'flex';
   if (appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; }
   try { await loadAppsView(username); } catch (_) {}
@@ -748,6 +621,202 @@ function profilePayloadFromForm() {
     mss_clamp: numOrZero(byId('profileMSSClamp').value),
     note: byId('profileNote').value.trim()
   };
+}
+
+function scopeLabel(scope) {
+  if (!scope) return 'Все пользователи';
+  if (scope.all_users) return 'Все пользователи';
+  const users = Array.isArray(scope.users) ? scope.users.filter(Boolean) : [];
+  const profilesList = Array.isArray(scope.profiles) ? scope.profiles.filter(Boolean) : [];
+  const parts = [];
+  if (profilesList.length) parts.push('Профили: ' + profilesList.join(', '));
+  if (users.length) parts.push('Пользователи: ' + users.join(', '));
+  return parts.length ? parts.join(' · ') : 'Все пользователи';
+}
+function normalizePolicyPatterns(patterns) {
+  const arr = Array.isArray(patterns) ? patterns : [];
+  return arr.map((p) => {
+    if (typeof p === 'string') {
+      const value = p.trim();
+      return value ? { type: 'contains', value } : null;
+    }
+    if (p && typeof p === 'object') {
+      const type = String(p.type || 'contains').trim() || 'contains';
+      const value = String(p.value || '').trim();
+      return value ? { type, value } : null;
+    }
+    return null;
+  }).filter(Boolean);
+}
+function normalizePatternObject(p) {
+  if (typeof p === 'string') return { type: 'contains', value: p.trim() };
+  return { type: (p && p.type ? String(p.type).trim().toLowerCase() : 'contains'), value: (p && p.value ? String(p.value).trim() : '') };
+}
+function patternKey(p) {
+  const x = normalizePatternObject(p);
+  return `${x.type}:${x.value}`.toLowerCase();
+}
+function renderPolicyPresetList(selectedKeys = new Set()) {
+  const host = byId('policyPresetList');
+  if (!host) return;
+  host.innerHTML = POLICY_PRESETS.map((preset) => {
+    const checked = preset.patterns.some((p) => selectedKeys.has(patternKey(p)));
+    return `<label class="presetItem${checked ? ' active' : ''}"><input type="checkbox" class="policyPresetCheck" value="${esc(preset.id)}" ${checked ? 'checked' : ''}><div><div class="presetTitle">${esc(preset.title)}</div><div class="presetMeta">${esc(preset.meta)}</div></div></label>`;
+  }).join('');
+}
+function selectedPresetIds() {
+  return Array.from(document.querySelectorAll('.policyPresetCheck:checked')).map((el) => el.value);
+}
+function selectedPresetPatterns() {
+  const ids = new Set(selectedPresetIds());
+  return POLICY_PRESETS.filter((p) => ids.has(p.id)).flatMap((p) => p.patterns.map(normalizePatternObject));
+}
+function policyPatternText(p) {
+  if (!p) return '';
+  if (typeof p === 'string') return p;
+  const type = String(p.type || 'contains').trim() || 'contains';
+  const value = String(p.value || '').trim();
+  if (!value) return '';
+  return type === 'contains' ? value : `${type}:${value}`;
+}
+function patternsPreview(patterns) {
+  const arr = normalizePolicyPatterns(patterns).map(policyPatternText).filter(Boolean);
+  if (!arr.length) return '—';
+  if (arr.length <= 2) return arr.join(', ');
+  return arr.slice(0,2).join(', ') + ' +' + (arr.length - 2);
+}
+function getUserRow(username) {
+  return (users || []).find((u) => (u?.username || '') === (username || '')) || null;
+}
+function policyScopeApplies(policy, username, profileName) {
+  const scope = policy && policy.scope ? policy.scope : {};
+  if (!policy || policy.enabled === false) return false;
+  if (scope.all_users === true || (!Array.isArray(scope.users) && !Array.isArray(scope.profiles))) return true;
+  const usersList = Array.isArray(scope.users) ? scope.users.filter(Boolean) : [];
+  const profilesList = Array.isArray(scope.profiles) ? scope.profiles.filter(Boolean) : [];
+  if (usersList.includes(username)) return true;
+  if (profileName && profilesList.includes(profileName)) return true;
+  return false;
+}
+function wildcardToRegexText(value) {
+  return escapeRegex(value).replace(/\\*/g, '.*');
+}
+function compilePolicyPattern(pattern) {
+  if (!pattern) return null;
+  const type = String(pattern.type || 'contains').trim().toLowerCase() || 'contains';
+  const value = String(pattern.value || '').trim();
+  if (!value) return null;
+  try {
+    if (type === 'regex') return new RegExp(value, 'i');
+    if (value.includes('*')) return new RegExp(wildcardToRegexText(value), 'i');
+    return new RegExp(escapeRegex(value), 'i');
+  } catch (_) {
+    return null;
+  }
+}
+function getPolicyMatchesForApp(app, username) {
+  const userRow = getUserRow(username);
+  const profileName = userRow && userRow.profile ? userRow.profile : '';
+  const hay = [app?.name, app?.category, app?.exe, app?.pid, app?.uptime].map((v) => String(v || '')).join('\n');
+  const matches = [];
+  for (const policy of (appPolicies || [])) {
+    if (!policyScopeApplies(policy, username, profileName)) continue;
+    const patterns = normalizePolicyPatterns(policy.patterns);
+    if (!patterns.length) continue;
+    const hitPatterns = [];
+    for (const pattern of patterns) {
+      const re = compilePolicyPattern(pattern);
+      if (re && re.test(hay)) hitPatterns.push(policyPatternText(pattern));
+    }
+    if (hitPatterns.length) {
+      matches.push({
+        id: policy.id || '',
+        name: policy.name || policy.id || 'Политика',
+        mode: policy.mode || 'deny_on_match',
+        matchedPatterns: hitPatterns
+      });
+    }
+  }
+  return matches;
+}
+function renderPolicies() {
+  const el = byId('policyRows');
+  if (!el) return;
+  if (!appPolicies.length) { el.innerHTML = '<tr><td colspan="7" class="muted">Нет данных</td></tr>'; return; }
+  el.innerHTML = appPolicies.map((p) => {
+    const status = p.enabled ? pill('ok', 'Включена') : pill('mute', 'Выключена');
+    const scope = scopeLabel(p.scope);
+    const msg = p.message || 'У вас обнаружено запрещенное приложение';
+    return '<tr>' +
+      `<td><div style="font-weight:800">${esc(p.name || p.id || '—')}</div><div class="muted small mono">${esc(p.id || '—')}</div></td>` +
+      `<td><span class="mono">${esc(p.mode || 'deny_on_match')}</span></td>` +
+      `<td>${esc(scope)}</td>` +
+      `<td class="mono">${esc(patternsPreview(p.patterns))}</td>` +
+      `<td>${esc(msg)}</td>` +
+      `<td>${status}</td>` +
+      `<td class="actions"><button type="button" data-action="editpolicy" data-pid="${esc(p.id || '')}">Изменить</button><button type="button" class="btnDanger" data-action="deletepolicy" data-pid="${esc(p.id || '')}">Удалить</button></td>` +
+      '</tr>';
+  }).join('');
+}
+function findPolicy(id) { return (appPolicies || []).find((p) => (p?.id || '') === (id || '')) || null; }
+function fillPolicyForm(policy) {
+  const p = policy || {};
+  byId('policyId').value = p.id || '';
+  byId('policyName').value = p.name || '';
+  byId('policyEnabled').value = p.enabled === false ? 'false' : 'true';
+  byId('policyMode').value = p.mode || 'deny_on_match';
+  const scope = p.scope || {};
+  let mode = 'all';
+  if (Array.isArray(scope.profiles) && scope.profiles.length) mode = 'profiles';
+  if (Array.isArray(scope.users) && scope.users.length) mode = 'users';
+  byId('policyScopeMode').value = scope.all_users === false ? mode : (mode === 'all' ? 'all' : mode);
+  byId('policyProfiles').value = Array.isArray(scope.profiles) ? scope.profiles.join(', ') : '';
+  byId('policyUsers').value = Array.isArray(scope.users) ? scope.users.join(', ') : '';
+  byId('policyMessage').value = p.message || 'У вас обнаружено запрещенное приложение';
+  const normalizedPatterns = normalizePolicyPatterns(p.patterns);
+  const selectedKeys = new Set(normalizedPatterns.map(patternKey));
+  renderPolicyPresetList(selectedKeys);
+  const presetPatternKeys = new Set(POLICY_PRESETS.flatMap((preset) => preset.patterns.map(patternKey)));
+  byId('policyPatterns').value = normalizedPatterns.filter((x) => !presetPatternKeys.has(patternKey(x))).map(policyPatternText).filter(Boolean).join('\n');
+}
+function resetPolicyForm() { renderPolicyPresetList(new Set()); fillPolicyForm({ enabled: true, mode: 'deny_on_match', scope: { all_users: true }, message: 'У вас обнаружено запрещенное приложение', patterns: [] }); }
+function openPolicyModal(isEdit=false) { if (byId('policyModalTitle')) byId('policyModalTitle').textContent = isEdit ? 'Изменить политику приложений' : 'Создать политику приложений'; byId('policyBg').style.display = 'flex'; }
+function closePolicyModal() { byId('policyBg').style.display = 'none'; }
+function policyPayloadFromForm() {
+  const scopeMode = byId('policyScopeMode').value;
+  const profiles = splitCSV(byId('policyProfiles').value);
+  const usersList = splitCSV(byId('policyUsers').value);
+  const scope = { all_users: scopeMode === 'all', profiles: scopeMode === 'profiles' ? profiles : [], users: scopeMode === 'users' ? usersList : [] };
+  return {
+    id: byId('policyId').value.trim(),
+    name: byId('policyName').value.trim(),
+    enabled: byId('policyEnabled').value === 'true',
+    mode: byId('policyMode').value || 'deny_on_match',
+    message: byId('policyMessage').value.trim() || 'У вас обнаружено запрещенное приложение',
+    patterns: (() => {
+      const presetPatterns = selectedPresetPatterns();
+      const customPatterns = byId('policyPatterns').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).map((x) => {
+        const m = x.match(/^(contains|regex)\s*:\s*(.+)$/i);
+        if (m) return { type: m[1].toLowerCase(), value: m[2].trim() };
+        return { type: 'contains', value: x };
+      }).filter((x) => x.value);
+      const merged = [...presetPatterns, ...customPatterns].map(normalizePatternObject).filter((x) => x.value);
+      const seen = new Set();
+      return merged.filter((x) => {
+        const key = patternKey(x);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })(),
+    scope
+  };
+}
+async function deletePolicy(id) {
+  if (!confirm('Удалить политику "' + id + '"?')) return;
+  await jpost('/api/admin/app-policies/delete', { id });
+  await loadPolicies();
+  renderPolicies();
 }
 
 
@@ -781,6 +850,9 @@ document.addEventListener('click', async (e) => {
   if (action === 'delete') await deleteUser(user);
   if (action === 'editprofile') { fillProfileForm(findProfile(pname)); openProfileModal(true); }
   if (action === 'deleteprofile') await deleteProfile(pname);
+  const pid = btn.getAttribute('data-pid') || '';
+  if (action === 'editpolicy') { fillPolicyForm(findPolicy(pid)); openPolicyModal(true); }
+  if (action === 'deletepolicy') await deletePolicy(pid);
 });
 
 byId('btnApplyApi').addEventListener('click', async () => {
@@ -814,10 +886,14 @@ if (byId('btnSaveProfile')) {
   byId('btnSaveProfile').addEventListener('click', async () => {
     const payload = profilePayloadFromForm();
     if (!payload.name) { alert('Укажите имя профиля'); return; }
-    await jpost('/api/admin/profiles', payload);
-    await loadAll();
-    closeProfileModal();
-    alert('Профиль сохранён');
+    try {
+      await jpost('/api/admin/profiles', payload);
+      await loadAll();
+      closeProfileModal();
+      alert('Профиль сохранён');
+    } catch (e) {
+      alert('Не удалось сохранить профиль: ' + (e?.message || e));
+    }
   });
 }
 if (byId('btnSyncVPN')) {
@@ -828,6 +904,28 @@ if (byId('btnSyncVPN')) {
   });
 }
 if (byId('btnRefreshProfiles')) byId('btnRefreshProfiles').addEventListener('click', async () => { await loadProfiles(); renderProfiles(); });
+
+if (byId('btnRefreshPolicies')) byId('btnRefreshPolicies').addEventListener('click', async () => { await loadPolicies(); renderPolicies(); });
+if (byId('btnOpenPolicyModal')) byId('btnOpenPolicyModal').addEventListener('click', () => { resetPolicyForm(); openPolicyModal(false); });
+if (byId('btnSavePolicy')) {
+  byId('btnSavePolicy').addEventListener('click', async () => {
+    const payload = policyPayloadFromForm();
+    payload.patterns = (Array.isArray(payload.patterns) ? payload.patterns : []).map((p) => {
+      if (typeof p === 'string') return { type: 'contains', value: p.trim() };
+      return { type: (p && p.type ? String(p.type).trim() : 'contains'), value: (p && p.value ? String(p.value).trim() : '') };
+    }).filter((p) => p.value);
+    if (!payload.id) { alert('Укажите ID политики'); return; }
+    if (!payload.name) { alert('Укажите название политики'); return; }
+    if (!payload.patterns.length) { alert('Добавьте хотя бы один шаблон'); return; }
+    await jpost('/api/admin/app-policies', payload);
+    await loadPolicies();
+    renderPolicies();
+    closePolicyModal();
+    alert('Политика сохранена');
+  });
+}
+if (byId('btnClosePolicyModal')) byId('btnClosePolicyModal').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closePolicyModal(); });
+if (byId('policyBg')) byId('policyBg').addEventListener('click', (e) => { if (e.target === byId('policyBg')) closePolicyModal(); });
 byId('btnBundle').addEventListener('click', () => downloadBundle(byId('bundleUser').value.trim()));
 byId('btnReissueBundle').addEventListener('click', () => downloadReissueBundle(byId('reissueUser').value.trim()));
 byId('btnUpsert').addEventListener('click', async () => {
@@ -843,34 +941,9 @@ if (byId('btnCloseApps')) byId('btnCloseApps').addEventListener('click', closeAp
 if (byId('appsSearch')) byId('appsSearch').addEventListener('input', renderAppsView);
 if (byId('appsCategory')) byId('appsCategory').addEventListener('change', renderAppsView);
 
-if (byId('forbiddenPattern')) byId('forbiddenPattern').addEventListener('input', renderAppsView);
-if (byId('forbiddenMode')) byId('forbiddenMode').addEventListener('change', renderAppsView);
-if (byId('forbiddenIgnoreCase')) byId('forbiddenIgnoreCase').addEventListener('change', renderAppsView);
-if (byId('btnApplyForbidden')) byId('btnApplyForbidden').addEventListener('click', () => { applyForbiddenForm(); renderAppsView(); });
-if (byId('btnResetForbidden')) byId('btnResetForbidden').addEventListener('click', resetForbiddenForm);
-if (byId('btnForbiddenAppend')) byId('btnForbiddenAppend').addEventListener('click', () => { appendPatternFromSelection(); closeForbiddenPresets(); });
-if (byId('btnForbiddenReplace')) byId('btnForbiddenReplace').addEventListener('click', () => { replacePatternFromSelection(); closeForbiddenPresets(); });
-if (byId('btnOpenForbiddenPresets')) byId('btnOpenForbiddenPresets').addEventListener('click', openForbiddenPresets);
-if (byId('btnCloseForbiddenPresets')) byId('btnCloseForbiddenPresets').addEventListener('click', closeForbiddenPresets);
-document.addEventListener('change', (e) => {
-  const cb = e.target && e.target.matches ? e.target.matches('input[data-forbidden-preset]') : false;
-  if (!cb) return;
-  const id = e.target.getAttribute('data-forbidden-preset');
-  if (e.target.checked) {
-    if (!forbiddenState.selectedPresets.includes(id)) forbiddenState.selectedPresets.push(id);
-  } else {
-    forbiddenState.selectedPresets = forbiddenState.selectedPresets.filter(x => x !== id);
-  }
-  saveForbiddenState();
-  renderForbiddenPresets();
-  updateForbiddenStats(0, 0, 0);
-});
-function openForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'flex'; }
-function closeForbiddenPresets() { if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').style.display = 'none'; }
-syncForbiddenControls();
-
 localStorage.setItem('tlsctrl_api_base', API_BASE);
 syncApiBaseUI();
+renderPolicyPresetList(new Set());
 Promise.all([loadSettings().catch(() => {}), loadAll().catch(console.error)]).then(() => renderHealth());
 setInterval(() => { loadAll().catch(() => {}); }, 3000);
 
@@ -883,6 +956,7 @@ if (byId('profileBg')) {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && byId('profileBg') && byId('profileBg').style.display === 'flex') closeProfileModal();
+  if (e.key === 'Escape' && byId('policyBg') && byId('policyBg').style.display === 'flex') closePolicyModal();
 });
 document.addEventListener('click', (e) => {
   const closeBtn = e.target && e.target.closest ? e.target.closest('#btnCloseProfileModal') : null;
@@ -891,6 +965,12 @@ document.addEventListener('click', (e) => {
     e.stopPropagation();
     closeProfileModal();
   }
+  const closePolicyBtn = e.target && e.target.closest ? e.target.closest('#btnClosePolicyModal') : null;
+  if (closePolicyBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    closePolicyModal();
+  }
 });
 if (byId('btnAppsRefresh')) byId('btnAppsRefresh').addEventListener('click', () => { requestAppsRefresh().catch(e => alert('Не удалось обновить список приложений: ' + (e?.message || e))); });
 Array.from(document.querySelectorAll('.tabBtn')).forEach((btn) => btn.addEventListener('click', () => { const tab = btn.getAttribute('data-tab'); document.querySelectorAll('.tabBtn').forEach(x => x.classList.toggle('active', x === btn)); document.querySelectorAll('.tabPanel').forEach(p => p.classList.toggle('active', p.getAttribute('data-panel') === tab)); }));
@@ -898,4 +978,4 @@ Array.from(document.querySelectorAll('.tabBtn')).forEach((btn) => btn.addEventLi
 window.addEventListener("resize", closeFloatingMenu);
 window.addEventListener("scroll", closeFloatingMenu, true);
 
-if (byId('forbiddenPresetsBg')) byId('forbiddenPresetsBg').addEventListener('click', (e) => { if (e.target === byId('forbiddenPresetsBg')) closeForbiddenPresets(); });
+if (byId('policyPresetList')) byId('policyPresetList').addEventListener('change', (e) => { const item = e.target && e.target.closest ? e.target.closest('.presetItem') : null; if (item) item.classList.toggle('active', !!item.querySelector('input')?.checked); Array.from(document.querySelectorAll('.presetItem')).forEach((el) => { const cb = el.querySelector('input'); el.classList.toggle('active', !!cb?.checked); }); });

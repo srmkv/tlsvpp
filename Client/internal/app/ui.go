@@ -2,6 +2,7 @@ package app
 
 import (
 	"image/color"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,11 +21,14 @@ import (
 )
 
 type ProcessRow struct {
-	Name     string
-	Category string
-	PID      string
-	Uptime   string
-	Exe      string
+	Name       string
+	Category   string
+	PID        string
+	Uptime     string
+	Exe        string
+	Blocked    bool
+	PolicyName string
+	Pattern    string
 }
 
 type UI struct {
@@ -378,35 +382,66 @@ func (u *UI) buildAppsPage() fyne.CanvasObject {
 	)
 
 	u.processTable = widget.NewTable(
-		func() (int, int) { u.mu.RLock(); defer u.mu.RUnlock(); return len(u.filteredProcess) + 1, 5 },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() (int, int) { u.mu.RLock(); defer u.mu.RUnlock(); return len(u.filteredProcess) + 1, 6 },
+		func() fyne.CanvasObject {
+			bg := canvas.NewRectangle(color.Transparent)
+			label := canvas.NewText("", color.NRGBA{R: 15, G: 23, B: 42, A: 255})
+			label.TextSize = 13
+			return container.NewMax(bg, label)
+		},
 		func(id widget.TableCellID, obj fyne.CanvasObject) {
-			label := obj.(*widget.Label)
-			label.Wrapping = fyne.TextTruncate
-			headers := []string{"Приложение", "Категория", "PID", "Время работы", "Путь"}
+			cell := obj.(*fyne.Container)
+			bg := cell.Objects[0].(*canvas.Rectangle)
+			label := cell.Objects[1].(*canvas.Text)
+			headers := []string{"Приложение", "Категория", "PID", "Время работы", "Путь", "Политика"}
 			if id.Row == 0 {
+				bg.FillColor = color.NRGBA{R: 241, G: 245, B: 249, A: 255}
+				bg.Refresh()
+				label.Color = color.NRGBA{R: 15, G: 23, B: 42, A: 255}
 				label.TextStyle = fyne.TextStyle{Bold: true}
 				if id.Col >= 0 && id.Col < len(headers) {
-					label.SetText(headers[id.Col])
+					label.Text = headers[id.Col]
 				} else {
-					label.SetText("")
+					label.Text = ""
 				}
+				label.Refresh()
 				return
 			}
-			label.TextStyle = fyne.TextStyle{}
 			u.mu.RLock()
 			defer u.mu.RUnlock()
 			if id.Row <= 0 || id.Row-1 >= len(u.filteredProcess) {
-				label.SetText("")
+				bg.FillColor = color.Transparent
+				bg.Refresh()
+				label.Text = ""
+				label.Color = color.NRGBA{R: 15, G: 23, B: 42, A: 255}
+				label.TextStyle = fyne.TextStyle{}
+				label.Refresh()
 				return
 			}
 			row := u.filteredProcess[id.Row-1]
-			vals := []string{row.Name, row.Category, row.PID, row.Uptime, row.Exe}
-			if id.Col >= 0 && id.Col < len(vals) {
-				label.SetText(vals[id.Col])
-			} else {
-				label.SetText("")
+			policyText := strings.TrimSpace(row.PolicyName)
+			if strings.TrimSpace(row.Pattern) != "" {
+				if policyText != "" {
+					policyText += " · "
+				}
+				policyText += strings.TrimSpace(row.Pattern)
 			}
+			vals := []string{row.Name, row.Category, row.PID, row.Uptime, row.Exe, policyText}
+			if id.Col >= 0 && id.Col < len(vals) {
+				label.Text = vals[id.Col]
+			} else {
+				label.Text = ""
+			}
+			if row.Blocked {
+				bg.FillColor = color.NRGBA{R: 254, G: 226, B: 226, A: 255}
+				label.Color = color.NRGBA{R: 153, G: 27, B: 27, A: 255}
+			} else {
+				bg.FillColor = color.Transparent
+				label.Color = color.NRGBA{R: 15, G: 23, B: 42, A: 255}
+			}
+			bg.Refresh()
+			label.TextStyle = fyne.TextStyle{}
+			label.Refresh()
 		},
 	)
 	u.processTable.SetColumnWidth(0, 150)
@@ -414,6 +449,7 @@ func (u *UI) buildAppsPage() fyne.CanvasObject {
 	u.processTable.SetColumnWidth(2, 60)
 	u.processTable.SetColumnWidth(3, 110)
 	u.processTable.SetColumnWidth(4, 210)
+	u.processTable.SetColumnWidth(5, 180)
 
 	hint := widget.NewLabel("Категории определяются эвристически по имени процесса и пути. Это не системная классификация Linux и она может ошибаться.")
 	return container.NewVBox(

@@ -13,6 +13,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,13 +26,73 @@ import (
 	"tlsclientnative/internal/system"
 )
 
+func trimJSONBody(body []byte) []byte {
+	return bytes.TrimRight(body, "\x00 \t\r\n")
+}
+
+var decisionMessageFieldRE = regexp.MustCompile(`(?s)"message"\s*:\s*"((?:\\.|[^"])*)"`)
+
+func extractLooseDecisionMessage(body []byte) string {
+	trimmed := strings.TrimSpace(string(trimJSONBody(body)))
+	if trimmed == "" {
+		return ""
+	}
+	if m := decisionMessageFieldRE.FindStringSubmatch(trimmed); len(m) > 1 {
+		if unq, err := strconv.Unquote("\"" + m[1] + "\""); err == nil {
+			if clean := strings.TrimSpace(unq); clean != "" {
+				return clean
+			}
+		}
+		if clean := strings.TrimSpace(strings.ReplaceAll(m[1], `\"`, `"`)); clean != "" {
+			return clean
+		}
+	}
+	return ""
+}
+
+func decodeJSONWithTextFallback[T any](body []byte, out *T) error {
+	body = trimJSONBody(body)
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("пустой ответ сервера")
+	}
+	if loose := extractLooseDecisionMessage(trimmed); loose != "" && trimmed[0] != '{' && trimmed[0] != '[' {
+		return fmt.Errorf(loose)
+	}
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		msg := extractLooseDecisionMessage(trimmed)
+		if msg == "" {
+			msg = string(trimmed)
+			if len(msg) > 500 {
+				msg = msg[:500]
+			}
+		}
+		return fmt.Errorf(strings.TrimSpace(msg))
+	}
+	if err := json.Unmarshal(trimmed, out); err != nil {
+		if msg := extractLooseDecisionMessage(trimmed); msg != "" {
+			return fmt.Errorf(msg)
+		}
+		preview := string(trimmed)
+		if len(preview) > 500 {
+			preview = preview[:500]
+		}
+		return fmt.Errorf("%w; ответ сервера: %s", err, strings.TrimSpace(preview))
+	}
+	return nil
+}
+
 const (
-	DisconnectPath     = "/api/admin/sessions/disconnect"
-	HeartbeatPath      = "/api/client/heartbeat"
-	VPNFramePath       = "/api/client/vpn-frame"
-	VPNPollPath        = "/api/client/vpn-poll"
-	frameTypeKeepalive = 1
-	frameTypeIPv4      = 2
+	DisconnectPath              = "/api/admin/sessions/disconnect"
+	HeartbeatPath               = "/api/client/heartbeat"
+	VPNFramePath                = "/api/client/vpn-frame"
+	VPNPollPath                 = "/api/client/vpn-poll"
+	policyBootstrapDefaultPath  = "/api/client/policy-bootstrap"
+	policyBootstrapFallbackPath = ""
+	policyViolationDefaultPath  = "/api/client/policy-violation"
+	policyViolationFallbackPath = "/api/plugin/app-policy/violation"
+	frameTypeKeepalive          = 1
+	frameTypeIPv4               = 2
 )
 
 var (
@@ -88,7 +151,6 @@ func applyClientHeaders(req *http.Request) {
 	}
 }
 
-
 func detectInterfacesModel() []model.NetworkInterface {
 	raw := system.DetectInterfaces()
 	if len(raw) == 0 {
@@ -97,14 +159,487 @@ func detectInterfacesModel() []model.NetworkInterface {
 	out := make([]model.NetworkInterface, 0, len(raw))
 	for _, item := range raw {
 		iface := model.NetworkInterface{}
-		if v, ok := item["name"].(string); ok { iface.Name = v }
-		if v, ok := item["mtu"].(int); ok { iface.MTU = v }
-		if v, ok := item["mac"].(string); ok { iface.MAC = v }
-		if arr, ok := item["flags"].([]string); ok { iface.Flags = append([]string(nil), arr...) }
-		if arr, ok := item["addresses"].([]string); ok { iface.Addresses = append([]string(nil), arr...) }
+		if v, ok := item["name"].(string); ok {
+			iface.Name = v
+		}
+		if v, ok := item["mtu"].(int); ok {
+			iface.MTU = v
+		}
+		if v, ok := item["mac"].(string); ok {
+			iface.MAC = v
+		}
+		if arr, ok := item["flags"].([]string); ok {
+			iface.Flags = append([]string(nil), arr...)
+		}
+		if arr, ok := item["addresses"].([]string); ok {
+			iface.Addresses = append([]string(nil), arr...)
+		}
 		out = append(out, iface)
 	}
 	return out
+}
+
+func checkAppPolicies(cfg state.Config, httpClient *http.Client) error {
+	decision, err := evaluateAppPolicies(cfg, httpClient)
+	if err != nil {
+		return err
+	}
+	if decision.Allow {
+		return nil
+	}
+	_ = reportPolicyDecisionViolation(cfg, httpClient, decision)
+	msg := strings.TrimSpace(decision.Message)
+	if msg == "" {
+		msg = "У вас обнаружено запрещенное приложение"
+	}
+	if len(decision.Matches) > 0 {
+		first := decision.Matches[0]
+		policyName := strings.TrimSpace(first.PolicyName)
+		if policyName == "" {
+			policyName = strings.TrimSpace(first.PolicyID)
+		}
+		if policyName != "" {
+			msg += "\nПолитика: " + policyName
+		}
+		if strings.TrimSpace(first.Pattern) != "" {
+			msg += "\nШаблон: " + strings.TrimSpace(first.Pattern)
+		}
+		seen := map[string]struct{}{}
+		apps := make([]string, 0, len(decision.Matches))
+		for _, m := range decision.Matches {
+			app := strings.TrimSpace(m.App)
+			if app == "" {
+				continue
+			}
+			key := strings.ToLower(app)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			apps = append(apps, app)
+		}
+		if len(apps) > 0 {
+			msg += "\nСовпадения: " + strings.Join(apps, ", ")
+		}
+	}
+	return fmt.Errorf(msg)
+}
+
+func collectPolicyInventory() ([]model.AppInventoryItem, error) {
+	seen := map[string]struct{}{}
+	out := make([]model.AppInventoryItem, 0, 64)
+	add := func(item model.AppInventoryItem) {
+		item.Name = strings.TrimSpace(item.Name)
+		item.Exe = strings.TrimSpace(item.Exe)
+		item.Category = strings.TrimSpace(item.Category)
+		if item.Name == "" && item.Exe == "" && item.Category == "" {
+			return
+		}
+		key := strings.ToLower(item.Name + "\n" + item.Exe + "\n" + item.Category)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	var errs []string
+	if procs, err := system.ListProcesses(); err == nil {
+		for _, pr := range procs {
+			add(model.AppInventoryItem{Name: strings.TrimSpace(pr.Name), Exe: strings.TrimSpace(pr.Exe), Category: strings.TrimSpace(pr.Category)})
+		}
+	} else {
+		errs = append(errs, err.Error())
+	}
+	if installed, err := system.ListInstalledApps(); err == nil {
+		for _, name := range installed {
+			add(model.AppInventoryItem{Name: strings.TrimSpace(name), Category: "Установлено"})
+		}
+	} else {
+		errs = append(errs, err.Error())
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf(strings.Join(errs, "; "))
+	}
+	return nil, nil
+}
+
+func evaluateAppPolicies(cfg state.Config, httpClient *http.Client) (model.AppPolicyDecision, error) {
+	inventory, err := collectPolicyInventory()
+	if err != nil {
+		return model.AppPolicyDecision{}, fmt.Errorf("не удалось проверить список приложений: %w", err)
+	}
+	payload := map[string]any{
+		"username": strings.TrimSpace(cfg.Username),
+		"profile":  strings.TrimSpace(cfg.Profile),
+		"apps":     inventory,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return model.AppPolicyDecision{}, err
+	}
+	paths := []string{}
+	seen := map[string]struct{}{}
+	for _, p := range []string{strings.TrimSpace(cfg.AppPolicyPath), policyBootstrapDefaultPath, policyBootstrapFallbackPath} {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+	var lastErr error
+	for _, path := range paths {
+		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		applyClientHeaders(req)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+		body = trimJSONBody(body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+			lastErr = fmt.Errorf("policy bootstrap unsupported on %s", path)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf(extractDecisionMessage(body, "Ошибка проверки политики"))
+			continue
+		}
+		var out model.AppPolicyDecision
+		if err := decodeJSONWithTextFallback(body, &out); err != nil {
+			lastErr = err
+			continue
+		}
+		return out, nil
+	}
+	if lastErr != nil {
+		return model.AppPolicyDecision{}, lastErr
+	}
+	return model.AppPolicyDecision{Allow: true}, nil
+}
+
+func fetchAppPolicies(cfg state.Config, httpClient *http.Client) ([]model.AppPolicy, error) {
+	payload := map[string]any{
+		"username": strings.TrimSpace(cfg.Username),
+		"profile":  strings.TrimSpace(cfg.Profile),
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{}
+	seen := map[string]struct{}{}
+	for _, p := range []string{strings.TrimSpace(cfg.AppPolicyPath), policyBootstrapDefaultPath, policyBootstrapFallbackPath} {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+	var lastErr error
+	for _, path := range paths {
+		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		applyClientHeaders(req)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body = trimJSONBody(body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+			lastErr = fmt.Errorf("policy bootstrap unsupported on %s", path)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf(extractDecisionMessage(body, "Ошибка проверки политики"))
+			continue
+		}
+		var out model.AppPolicyResolveResponse
+		if err := decodeJSONWithTextFallback(body, &out); err != nil {
+			lastErr = err
+			continue
+		}
+		if len(out.Policies) == 0 {
+			return nil, nil
+		}
+		return out.Policies, nil
+	}
+	if lastErr != nil && !strings.Contains(lastErr.Error(), "unsupported") {
+		return nil, lastErr
+	}
+	return nil, nil
+}
+
+func wildcardPatternToRegexp(value string) *regexp.Regexp {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return nil
+	}
+	quoted := regexp.QuoteMeta(v)
+	quoted = strings.ReplaceAll(quoted, `\*`, ".*")
+	return regexp.MustCompile(`(?i)` + quoted)
+}
+
+func matchPolicyApps(policy model.AppPolicy, apps []string) ([]string, string) {
+	matched := []string{}
+	for _, pat := range policy.Patterns {
+		pv := strings.TrimSpace(pat.Value)
+		if pv == "" {
+			continue
+		}
+		ptype := strings.ToLower(strings.TrimSpace(pat.Type))
+		if ptype == "" {
+			ptype = "contains"
+		}
+		var re *regexp.Regexp
+		switch ptype {
+		case "regex":
+			compiled, err := regexp.Compile(`(?i)` + pv)
+			if err != nil {
+				continue
+			}
+			re = compiled
+		default:
+			if strings.Contains(pv, "*") {
+				re = wildcardPatternToRegexp(pv)
+			}
+		}
+		for _, app := range apps {
+			appTrim := strings.TrimSpace(app)
+			if appTrim == "" {
+				continue
+			}
+			matchedNow := false
+			switch ptype {
+			case "regex":
+				matchedNow = re != nil && re.MatchString(appTrim)
+			default:
+				if re != nil {
+					matchedNow = re.MatchString(appTrim)
+				} else {
+					matchedNow = strings.Contains(strings.ToLower(appTrim), strings.ToLower(pv))
+				}
+			}
+			if matchedNow {
+				if !containsStringCI(matched, appTrim) {
+					matched = append(matched, appTrim)
+				}
+			}
+		}
+		if len(matched) > 0 {
+			return matched, pv
+		}
+	}
+	return nil, ""
+}
+
+func MatchPoliciesForApps(cfg state.Config, apps []string) (map[string]model.AppPolicyMatch, error) {
+	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 12*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer tr.CloseIdleConnections()
+
+	policies, err := fetchAppPolicies(cfg, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	matches := map[string]model.AppPolicyMatch{}
+	if len(policies) == 0 || len(apps) == 0 {
+		return matches, nil
+	}
+	for _, policy := range policies {
+		if !policy.Enabled {
+			continue
+		}
+		matchedApps, pattern := matchPolicyApps(policy, apps)
+		for _, app := range matchedApps {
+			key := strings.ToLower(strings.TrimSpace(app))
+			if key == "" {
+				continue
+			}
+			if _, ok := matches[key]; ok {
+				continue
+			}
+			matches[key] = model.AppPolicyMatch{PolicyID: strings.TrimSpace(policy.ID), PolicyName: strings.TrimSpace(policy.Name), Pattern: strings.TrimSpace(pattern), App: strings.TrimSpace(app)}
+		}
+	}
+	return matches, nil
+}
+
+func extractDecisionMessage(body []byte, fallback string) string {
+	body = trimJSONBody(body)
+	var decision model.AppPolicyDecision
+	if err := json.Unmarshal(body, &decision); err == nil {
+		msg := strings.TrimSpace(decision.Message)
+		if msg != "" {
+			return msg
+		}
+	}
+	if msg := extractLooseDecisionMessage(body); msg != "" {
+		return msg
+	}
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		msg = fallback
+	}
+	return msg
+}
+
+func containsStringCI(items []string, target string) bool {
+	for _, it := range items {
+		if strings.EqualFold(strings.TrimSpace(it), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func CollectMatchedPolicyApps(cfg state.Config) ([]string, error) {
+	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 12*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer tr.CloseIdleConnections()
+
+	policies, err := fetchAppPolicies(cfg, httpClient)
+	if err != nil || len(policies) == 0 {
+		return nil, err
+	}
+	appNames, invErr := system.ListPolicyAppNames()
+	if invErr != nil {
+		return nil, invErr
+	}
+	seen := map[string]string{}
+	for _, policy := range policies {
+		if !policy.Enabled {
+			continue
+		}
+		matchedApps, _ := matchPolicyApps(policy, appNames)
+		for _, app := range matchedApps {
+			key := strings.ToLower(strings.TrimSpace(app))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; !ok {
+				seen[key] = strings.TrimSpace(app)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, app := range seen {
+		out = append(out, app)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out, nil
+}
+
+func reportPolicyDecisionViolation(cfg state.Config, httpClient *http.Client, decision model.AppPolicyDecision) error {
+	policyID := ""
+	policyName := ""
+	matchedApps := []string{}
+	if len(decision.Matches) > 0 {
+		policyID = strings.TrimSpace(decision.Matches[0].PolicyID)
+		policyName = strings.TrimSpace(decision.Matches[0].PolicyName)
+		seen := map[string]struct{}{}
+		for _, m := range decision.Matches {
+			app := strings.TrimSpace(m.App)
+			if app == "" {
+				continue
+			}
+			key := strings.ToLower(app)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			matchedApps = append(matchedApps, app)
+		}
+	}
+	payload := map[string]any{
+		"username":     strings.TrimSpace(cfg.Username),
+		"profile":      strings.TrimSpace(cfg.Profile),
+		"policy_id":    policyID,
+		"policy_name":  policyName,
+		"matched_apps": matchedApps,
+		"action":       "deny_connect",
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	for _, path := range []string{policyViolationDefaultPath, policyViolationFallbackPath} {
+		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		applyClientHeaders(req)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+	}
+	return nil
+}
+
+func reportPolicyViolation(cfg state.Config, httpClient *http.Client, policy model.AppPolicy, matchedApps []string) error {
+	payload := map[string]any{
+		"username":     strings.TrimSpace(cfg.Username),
+		"profile":      strings.TrimSpace(cfg.Profile),
+		"policy_id":    strings.TrimSpace(policy.ID),
+		"policy_name":  strings.TrimSpace(policy.Name),
+		"matched_apps": matchedApps,
+		"action":       "deny_connect",
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	for _, path := range []string{policyViolationDefaultPath, policyViolationFallbackPath} {
+		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		applyClientHeaders(req)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+	}
+	return nil
 }
 
 func currentSession() (model.ClientSession, bool) {
@@ -134,6 +669,10 @@ func setCurrentSession(s model.ClientSession, client *http.Client, tr *http.Tran
 func ConnectVPN(cfg state.Config) (model.ClientSession, error) {
 	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 15*time.Second)
 	if err != nil {
+		return model.ClientSession{}, err
+	}
+	if err := checkAppPolicies(cfg, httpClient); err != nil {
+		tr.CloseIdleConnections()
 		return model.ClientSession{}, err
 	}
 
@@ -291,11 +830,23 @@ func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body = trimJSONBody(body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			return nil
 		}
-		lastErr = fmt.Errorf("apps report status (%s): %s", path, strings.TrimSpace(string(body)))
+		if resp.StatusCode == http.StatusLocked {
+			var decision model.AppPolicyDecision
+			if err := json.Unmarshal(body, &decision); err == nil && !decision.Allow {
+				msg := strings.TrimSpace(decision.Message)
+				if msg == "" {
+					msg = "У вас обнаружено запрещенное приложение"
+				}
+				lastErr = fmt.Errorf(msg)
+				break
+			}
+		}
+		lastErr = fmt.Errorf(extractDecisionMessage(body, "Сервер отклонил список приложений"))
 		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 			break
 		}
@@ -340,7 +891,6 @@ func Disconnect(cfg state.Config) error {
 	return nil
 }
 
-
 func sendDisconnectNotice(cfg state.Config, s model.ClientSession) error {
 	activeMu.RLock()
 	httpClient := activeClient
@@ -361,25 +911,31 @@ func sendDisconnectNotice(cfg state.Config, s model.ClientSession) error {
 		MTLSVerified: true,
 	}
 	body := map[string]any{
-		"username": payload.Username,
-		"system_user": payload.SystemUser,
-		"os_name": payload.OSName,
-		"os_version": payload.OSVersion,
-		"system_uptime": payload.SystemUptime,
-		"ip": payload.IP,
-		"mac": payload.MAC,
-		"source": payload.Source,
-		"interfaces": payload.Interfaces,
+		"username":       payload.Username,
+		"system_user":    payload.SystemUser,
+		"os_name":        payload.OSName,
+		"os_version":     payload.OSVersion,
+		"system_uptime":  payload.SystemUptime,
+		"ip":             payload.IP,
+		"mac":            payload.MAC,
+		"source":         payload.Source,
+		"interfaces":     payload.Interfaces,
 		"connect_intent": "disconnect",
 	}
 	bodyBytes, err := json.Marshal(body)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, HeartbeatPath), bytes.NewReader(bodyBytes))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	applyClientHeaders(req)
 	resp, err := httpClient.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 256))
 	if resp.StatusCode != http.StatusOK {

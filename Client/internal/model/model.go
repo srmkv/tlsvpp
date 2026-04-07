@@ -62,15 +62,64 @@ type AppsReport struct {
 }
 
 type ClientHeartbeat struct {
-	Username     string `json:"username"`
-	CertSerial   string `json:"cert_serial,omitempty"`
-	SystemUser   string `json:"system_user"`
-	OSName       string `json:"os_name"`
-	OSVersion    string `json:"os_version"`
-	SystemUptime string `json:"system_uptime"`
-	IP           string `json:"ip"`
-	MAC          string `json:"mac"`
+	Username     string             `json:"username"`
+	CertSerial   string             `json:"cert_serial,omitempty"`
+	SystemUser   string             `json:"system_user"`
+	OSName       string             `json:"os_name"`
+	OSVersion    string             `json:"os_version"`
+	SystemUptime string             `json:"system_uptime"`
+	IP           string             `json:"ip"`
+	MAC          string             `json:"mac"`
 	Source       string             `json:"source"`
 	Interfaces   []NetworkInterface `json:"interfaces,omitempty"`
 	MTLSVerified bool               `json:"mtls_verified,omitempty"`
+}
+
+type AppPolicyPattern struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+type AppPolicyScope struct {
+	AllUsers bool     `json:"all_users"`
+	Users    []string `json:"users,omitempty"`
+	Profiles []string `json:"profiles,omitempty"`
+}
+
+type AppPolicy struct {
+	ID       string             `json:"id"`
+	Name     string             `json:"name"`
+	Enabled  bool               `json:"enabled"`
+	Mode     string             `json:"mode"`
+	Message  string             `json:"message"`
+	Patterns []AppPolicyPattern `json:"patterns"`
+	Scope    AppPolicyScope     `json:"scope"`
+}
+
+type AppPolicyResolveResponse struct {
+	OK       bool        `json:"ok"`
+	Policies []AppPolicy `json:"policies,omitempty"`
+}
+
+type AppInventoryItem struct {
+	Name     string `json:"name,omitempty"`
+	Exe      string `json:"exe,omitempty"`
+	Category string `json:"category,omitempty"`
+}
+
+type AppPolicyMatch struct {
+	PolicyID   string `json:"policy_id,omitempty"`
+	PolicyName string `json:"policy_name,omitempty"`
+	Pattern    string `json:"pattern,omitempty"`
+	App        string `json:"app,omitempty"`
+}
+
+type AppPolicyDecision struct {
+	PolicyVersion string           `json:"policy_version,omitempty"`
+	Username      string           `json:"username,omitempty"`
+	Profile       string           `json:"profile,omitempty"`
+	Allow         bool             `json:"allow"`
+	Message       string           `json:"message,omitempty"`
+	Matches       []AppPolicyMatch `json:"matches,omitempty"`
+	Policies      []AppPolicy      `json:"policies,omitempty"`
 }

@@ -1,15 +1,20 @@
 package app
 
 import (
+	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"tlsclientnative/internal/client"
+	"tlsclientnative/internal/model"
 	"tlsclientnative/internal/state"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/widget"
 )
 
 func (u *UI) toggleConnect() {
@@ -72,6 +77,7 @@ func (u *UI) connectOnce() {
 		if err != nil {
 			u.setStatus("Ошибка подключения: " + err.Error())
 			u.appendLog("Ошибка подключения: " + err.Error())
+			u.showConnectErrorDialog(err)
 			if client.IsUnauthorizedError(err) {
 				u.markDisconnectedLocalReason("сертификат отклонён сервером: требуется новая конфигурация", "disconnected")
 			} else if client.IsBackendUnavailableError(err) {
@@ -97,6 +103,117 @@ func (u *UI) connectOnce() {
 }
 
 func formatTunnelID(id uint64) string { return strconv.FormatUint(id, 10) }
+
+var policyMessageFieldRE = regexp.MustCompile(`(?s)"message"\s*:\s*"((?:\\.|[^"])*)"`)
+
+func extractPolicyMessageLoose(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	if m := policyMessageFieldRE.FindStringSubmatch(msg); len(m) > 1 {
+		if unq, err := strconv.Unquote("\"" + m[1] + "\""); err == nil {
+			if clean := strings.TrimSpace(unq); clean != "" {
+				return clean
+			}
+		}
+		if clean := strings.TrimSpace(strings.ReplaceAll(m[1], `\"`, `"`)); clean != "" {
+			return clean
+		}
+	}
+	return ""
+}
+
+func cleanConnectErrorMessage(err error) string {
+	if err == nil {
+		return "Неизвестная ошибка подключения"
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "Неизвестная ошибка подключения"
+	}
+	if loose := extractPolicyMessageLoose(msg); loose != "" {
+		return loose
+	}
+	for _, candidate := range []string{msg, strings.TrimSpace(extractJSONTail(msg))} {
+		if candidate == "" {
+			continue
+		}
+		var decision model.AppPolicyDecision
+		if err := json.Unmarshal([]byte(candidate), &decision); err == nil {
+			if clean := strings.TrimSpace(decision.Message); clean != "" {
+				return clean
+			}
+			return "У вас обнаружено запрещенное приложение"
+		}
+	}
+	if idx := strings.Index(msg, "ответ сервера:"); idx >= 0 {
+		rest := strings.TrimSpace(msg[idx+len("ответ сервера:"):])
+		if rest != "" {
+			if tail := strings.TrimSpace(extractJSONTail(rest)); tail != "" {
+				var decision model.AppPolicyDecision
+				if err := json.Unmarshal([]byte(tail), &decision); err == nil {
+					if clean := strings.TrimSpace(decision.Message); clean != "" {
+						return clean
+					}
+					return "У вас обнаружено запрещенное приложение"
+				}
+			}
+			msg = rest
+		} else {
+			msg = strings.TrimSpace(msg[:idx])
+		}
+	}
+	if loose := extractPolicyMessageLoose(msg); loose != "" {
+		return loose
+	}
+	if strings.HasPrefix(msg, "policy bootstrap status") {
+		if colon := strings.Index(msg, ":"); colon >= 0 && colon+1 < len(msg) {
+			msg = strings.TrimSpace(msg[colon+1:])
+		}
+	}
+	if tail := strings.TrimSpace(extractJSONTail(msg)); tail != "" {
+		var decision model.AppPolicyDecision
+		if err := json.Unmarshal([]byte(tail), &decision); err == nil {
+			if clean := strings.TrimSpace(decision.Message); clean != "" {
+				return clean
+			}
+			return "У вас обнаружено запрещенное приложение"
+		}
+	}
+	if loose := extractPolicyMessageLoose(msg); loose != "" {
+		return loose
+	}
+	if strings.HasPrefix(strings.TrimSpace(msg), "{") || strings.Contains(msg, "{\"") {
+		return "У вас обнаружено запрещенное приложение"
+	}
+	return msg
+}
+
+func extractJSONTail(msg string) string {
+	idx := strings.Index(msg, "{")
+	if idx < 0 || idx >= len(msg) {
+		return ""
+	}
+	return strings.TrimSpace(msg[idx:])
+}
+
+func (u *UI) showConnectErrorDialog(err error) {
+	if err == nil || u == nil || u.window == nil {
+		return
+	}
+	msg := cleanConnectErrorMessage(err)
+	title := "Ошибка подключения"
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "запрещ") || strings.Contains(lower, "policy") || strings.Contains(lower, "blocked") || strings.Contains(lower, "deny") {
+		title = "Подключение заблокировано политикой"
+	}
+	body := widget.NewLabel(msg)
+	body.Wrapping = fyne.TextWrapWord
+	fyne.Do(func() {
+		dialog.NewCustom(title, "Закрыть", container.NewVBox(body), u.window).Show()
+	})
+}
 
 func (u *UI) disconnectOnce() {
 	if err := u.syncFormToConfig(); err != nil {

@@ -13,6 +13,7 @@ type Config struct {
 	ClientsPath    string `json:"clients_path"`
 	CommandsPath   string `json:"commands_path"`
 	AppsReportPath string `json:"apps_report_path"`
+	AppPolicyPath  string `json:"app_policy_path"`
 	PollSeconds    int    `json:"poll_seconds"`
 	Username       string `json:"username"`
 	Profile        string `json:"profile"`
@@ -52,6 +53,7 @@ func defaultConfig() (Config, error) {
 		ClientsPath:    "/api/client/vpn-bind",
 		CommandsPath:   "/api/client/command",
 		AppsReportPath: "/api/client/apps",
+		AppPolicyPath:  "/api/client/policy-bootstrap",
 		PollSeconds:    5,
 		Username:       "",
 		Profile:        "default",
@@ -88,6 +90,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AppsReportPath == "" || cfg.AppsReportPath == "/api/v1/apps/report" {
 		cfg.AppsReportPath = "/api/client/apps"
+	}
+	if cfg.AppPolicyPath == "" {
+		cfg.AppPolicyPath = "/api/client/policy-bootstrap"
 	}
 	if cfg.PollSeconds <= 0 {
 		cfg.PollSeconds = 5

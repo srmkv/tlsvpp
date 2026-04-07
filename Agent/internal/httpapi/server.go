@@ -121,6 +121,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/profiles", s.handleAdminProfiles)
 	mux.HandleFunc("/api/admin/profiles/delete", s.handleAdminDeleteProfile)
+	mux.HandleFunc("/api/admin/app-policies", s.handleAdminAppPolicies)
+	mux.HandleFunc("/api/admin/app-policies/delete", s.handleAdminDeleteAppPolicy)
+	mux.HandleFunc("/api/plugin/app-policy/resolve", s.handlePluginResolveAppPolicy)
+	mux.HandleFunc("/api/plugin/app-policy/evaluate", s.handlePluginEvaluateAppPolicy)
+	mux.HandleFunc("/api/plugin/app-policy/violation", s.handlePluginAppPolicyViolation)
 	mux.HandleFunc("/api/admin/users/reissue", s.handleAdminReissue)
 	mux.HandleFunc("/api/admin/users/delete", s.handleAdminDelete)
 	mux.HandleFunc("/api/admin/users/request-apps", s.handleAdminRequestApps)
@@ -420,7 +425,6 @@ func (s *Server) handleAdminDeleteProfile(w http.ResponseWriter, r *http.Request
 // Client traffic must terminate in the VPP plugin. The agent is admin/PKI only.
 var _ = model.Command{}
 
-
 func (s *Server) handleAdminSyncVPN(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
@@ -432,4 +436,3 @@ func (s *Server) handleAdminSyncVPN(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
-

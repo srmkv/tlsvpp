@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"image/color"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"tlsclientnative/internal/client"
@@ -281,7 +283,8 @@ func (u *UI) refreshProcesses() {
 		return
 	}
 	result := make([]ProcessRow, 0, len(rows))
-	reportItems := make([]model.AppReportItem, 0, len(rows))
+	reportItems := make([]model.AppReportItem, 0, len(rows)+8)
+	seenNames := map[string]struct{}{}
 	for _, p := range rows {
 		exe := p.Exe
 		if strings.TrimSpace(exe) == "" {
@@ -304,12 +307,56 @@ func (u *UI) refreshProcesses() {
 			Uptime:   uptime,
 			Exe:      exe,
 		})
+		if key := strings.ToLower(strings.TrimSpace(name)); key != "" {
+			seenNames[key] = struct{}{}
+		}
 	}
+
 	u.mu.Lock()
 	cfg := u.cfg
 	connected := u.connected
-	u.processRows = result
 	u.mu.Unlock()
+
+	markedRows, markErr := applyPolicyMarks(cfg, result)
+	if markErr != nil {
+		u.appendLog("Не удалось применить политики к списку приложений: " + markErr.Error())
+		markedRows = result
+	}
+
+	u.mu.Lock()
+	u.processRows = markedRows
+	u.mu.Unlock()
+
+	if connected {
+		matchedApps, matchErr := client.CollectMatchedPolicyApps(cfg)
+		if matchErr != nil {
+			u.appendLog("Не удалось собрать приложения по политикам: " + matchErr.Error())
+		} else if len(matchedApps) > 0 {
+			added := 0
+			for _, appName := range matchedApps {
+				name := strings.TrimSpace(appName)
+				if name == "" {
+					continue
+				}
+				key := strings.ToLower(name)
+				if _, ok := seenNames[key]; ok {
+					continue
+				}
+				seenNames[key] = struct{}{}
+				reportItems = append(reportItems, model.AppReportItem{
+					Name:     name,
+					Category: "Установлено",
+					PID:      0,
+					Uptime:   "—",
+					Exe:      "—",
+				})
+				added++
+			}
+			if added > 0 {
+				u.appendLog("Добавлены приложения по политикам: " + strconv.Itoa(added))
+			}
+		}
+	}
 
 	u.refreshProcessCategoryOptions()
 	u.applyProcessFilter()
@@ -323,11 +370,16 @@ func (u *UI) refreshProcesses() {
 		}
 		if err := client.SendAppsReport(cfg, report); err != nil {
 			u.appendLog("Не удалось передать список приложений: " + err.Error())
+			if strings.Contains(strings.ToLower(err.Error()), "запрещенное приложение") {
+				go client.Disconnect(cfg)
+				u.markDisconnectedLocalReason(err.Error(), "error")
+			}
 		} else {
 			u.appendLog("Список приложений передан")
 		}
 	}
 }
+
 func (u *UI) sendAppsNow() {
 	u.mu.RLock()
 	cfg := u.cfg
@@ -338,24 +390,57 @@ func (u *UI) sendAppsNow() {
 		u.appendLog("Список приложений не отправлен: соединение не активно")
 		return
 	}
-	reportItems := make([]model.AppReportItem, 0, len(rows))
+	reportItems := make([]model.AppReportItem, 0, len(rows)+8)
+	seenNames := map[string]struct{}{}
 	for _, p := range rows {
-		reportItems = append(reportItems, model.AppReportItem{Name: p.Name, Category: p.Category, PID: parsePID(p.PID), Uptime: p.Uptime, Exe: p.Exe})
+		reportItems = append(reportItems, model.AppReportItem{
+			Name:     p.Name,
+			Category: p.Category,
+			PID:      parsePIDText(p.PID),
+			Uptime:   p.Uptime,
+			Exe:      p.Exe,
+		})
+		if key := strings.ToLower(strings.TrimSpace(p.Name)); key != "" {
+			seenNames[key] = struct{}{}
+		}
 	}
-	report := model.AppsReport{Username: strings.TrimSpace(cfg.Username), GeneratedAt: time.Now().UTC().Format(time.RFC3339), Apps: reportItems}
+	matchedApps, matchErr := client.CollectMatchedPolicyApps(cfg)
+	if matchErr != nil {
+		u.appendLog("Не удалось собрать приложения по политикам: " + matchErr.Error())
+	} else if len(matchedApps) > 0 {
+		for _, appName := range matchedApps {
+			name := strings.TrimSpace(appName)
+			if name == "" {
+				continue
+			}
+			key := strings.ToLower(name)
+			if _, ok := seenNames[key]; ok {
+				continue
+			}
+			seenNames[key] = struct{}{}
+			reportItems = append(reportItems, model.AppReportItem{
+				Name:     name,
+				Category: "Установлено",
+				PID:      0,
+				Uptime:   "—",
+				Exe:      "—",
+			})
+		}
+	}
+	report := model.AppsReport{
+		Username:    strings.TrimSpace(cfg.Username),
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Apps:        reportItems,
+	}
 	if err := client.SendAppsReport(cfg, report); err != nil {
 		u.appendLog("Не удалось передать список приложений: " + err.Error())
-		u.setStatus("Не удалось передать список приложений")
+		if strings.Contains(strings.ToLower(err.Error()), "запрещенное приложение") {
+			go client.Disconnect(cfg)
+			u.markDisconnectedLocalReason(err.Error(), "error")
+		}
 		return
 	}
-	u.appendLog("Список приложений передан вручную")
-	u.setStatus("Список приложений отправлен")
-}
-
-func parsePID(v string) int {
-	var pid int
-	_, _ = fmt.Sscanf(strings.TrimSpace(v), "%d", &pid)
-	return pid
+	u.appendLog("Список приложений передан по запросу")
 }
 
 func (u *UI) refreshProcessCategoryOptions() {
@@ -410,6 +495,7 @@ func (u *UI) applyProcessFilter() {
 
 	u.mu.Lock()
 	filtered := make([]ProcessRow, 0, len(u.processRows))
+	blockedCount := 0
 	for _, p := range u.processRows {
 		if selectedCategory != "Все категории" && p.Category != selectedCategory {
 			continue
@@ -421,6 +507,9 @@ func (u *UI) applyProcessFilter() {
 			}
 		}
 		filtered = append(filtered, p)
+		if p.Blocked {
+			blockedCount++
+		}
 	}
 	u.filteredProcess = filtered
 	count := len(u.filteredProcess)
@@ -428,12 +517,77 @@ func (u *UI) applyProcessFilter() {
 
 	fyne.Do(func() {
 		if u.processCount != nil {
-			u.processCount.SetText("Приложений: " + formatPID(count))
+			u.processCount.SetText("Приложений: " + formatPID(count) + " · Запрещено: " + formatPID(blockedCount))
 		}
 		if u.processTable != nil {
 			u.processTable.Refresh()
 		}
 	})
+}
+
+func applyPolicyMarks(cfg state.Config, rows []ProcessRow) ([]ProcessRow, error) {
+	candidates := make([]string, 0, len(rows)*3)
+	seenCandidate := map[string]struct{}{}
+	addCandidate := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || v == "—" {
+			return
+		}
+		key := strings.ToLower(v)
+		if _, ok := seenCandidate[key]; ok {
+			return
+		}
+		seenCandidate[key] = struct{}{}
+		candidates = append(candidates, v)
+	}
+	for _, row := range rows {
+		addCandidate(row.Name)
+		addCandidate(row.Exe)
+		if base := strings.TrimSpace(filepath.Base(row.Exe)); base != "" && base != "." && base != "/" {
+			addCandidate(base)
+		}
+	}
+	matches, err := client.MatchPoliciesForApps(cfg, candidates)
+	if err != nil {
+		return rows, err
+	}
+	for i := range rows {
+		row := &rows[i]
+		for _, probe := range []string{row.Name, row.Exe, filepath.Base(row.Exe)} {
+			key := strings.ToLower(strings.TrimSpace(probe))
+			if key == "" || key == "—" {
+				continue
+			}
+			if match, ok := matches[key]; ok {
+				row.Blocked = true
+				row.PolicyName = strings.TrimSpace(match.PolicyName)
+				if row.PolicyName == "" {
+					row.PolicyName = strings.TrimSpace(match.PolicyID)
+				}
+				row.Pattern = strings.TrimSpace(match.Pattern)
+				break
+			}
+		}
+	}
+	appNames, invErr := system.ListPolicyAppNames()
+	if invErr == nil {
+		fullMatches, matchErr := client.MatchPoliciesForApps(cfg, appNames)
+		if matchErr == nil {
+			seenRow := map[string]struct{}{}
+			for _, row := range rows {
+				if key := strings.ToLower(strings.TrimSpace(row.Name)); key != "" {
+					seenRow[key] = struct{}{}
+				}
+			}
+			for key, match := range fullMatches {
+				if _, ok := seenRow[key]; ok {
+					continue
+				}
+				rows = append(rows, ProcessRow{Name: match.App, Category: "Установлено", PID: "—", Uptime: "—", Exe: "—", Blocked: true, PolicyName: strings.TrimSpace(match.PolicyName), Pattern: strings.TrimSpace(match.Pattern)})
+			}
+		}
+	}
+	return rows, nil
 }
 
 func empty(v string) string {
@@ -462,6 +616,18 @@ func formatTimeRFC3339Value(t time.Time) string {
 	return t.Local().Format("2006-01-02 15:04:05")
 }
 func formatPID(v int) string { return fmt.Sprintf("%d", v) }
+
+func parsePIDText(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "—" {
+		return 0
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
+}
 func formatPoll(v int) string {
 	if v <= 0 {
 		return "5"

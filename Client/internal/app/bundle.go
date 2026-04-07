@@ -69,10 +69,11 @@ func importBundle(zipData []byte, cfg state.Config) (state.Config, error) {
 		}
 		defer rc.Close()
 		var meta struct {
-			Username   string `json:"username"`
-			Profile    string `json:"profile"`
-			ServerURL  string `json:"server_url"`
-			ServerName string `json:"server_name"`
+			Username      string `json:"username"`
+			Profile       string `json:"profile"`
+			ServerURL     string `json:"server_url"`
+			ServerName    string `json:"server_name"`
+			AppPolicyPath string `json:"app_policy_path"`
 		}
 		if err := json.NewDecoder(rc).Decode(&meta); err == nil {
 			if meta.Username != "" {
@@ -86,6 +87,9 @@ func importBundle(zipData []byte, cfg state.Config) (state.Config, error) {
 			}
 			if meta.ServerName != "" {
 				cfg.ServerName = meta.ServerName
+			}
+			if strings.TrimSpace(meta.AppPolicyPath) != "" {
+				cfg.AppPolicyPath = strings.TrimSpace(meta.AppPolicyPath)
 			}
 		}
 	}

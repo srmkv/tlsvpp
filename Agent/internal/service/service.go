@@ -136,11 +136,11 @@ func (s *Service) persistUserRecord(username, certSerial string, enabled bool, p
 		profile = "default"
 	}
 	users[username] = persistedUser{
-		Username: username,
+		Username:   username,
 		CertSerial: certSerial,
-		Enabled: enabled,
-		Profile: profile,
-		UpdatedAt: time.Now().UTC(),
+		Enabled:    enabled,
+		Profile:    profile,
+		UpdatedAt:  time.Now().UTC(),
 	}
 	return s.savePersistedUsers(users)
 }
@@ -168,10 +168,10 @@ func (s *Service) SyncPersistedUsers(ctx context.Context) error {
 			continue
 		}
 		if err := s.backend.UpsertUser(ctx, model.User{
-			Username: u.Username,
+			Username:   u.Username,
 			CertSerial: u.CertSerial,
-			Enabled: u.Enabled,
-			Profile: profile,
+			Enabled:    u.Enabled,
+			Profile:    profile,
 		}); err != nil {
 			return fmt.Errorf("sync persisted user %q: %w", u.Username, err)
 		}
@@ -684,11 +684,11 @@ func (s *Service) Users(ctx context.Context) ([]model.User, error) {
 			profile = "default"
 		}
 		users = append(users, model.User{
-			Username: username,
+			Username:   username,
 			CertSerial: pu.CertSerial,
-			Enabled: pu.Enabled,
-			Profile: profile,
-			UpdatedAt: pu.UpdatedAt,
+			Enabled:    pu.Enabled,
+			Profile:    profile,
+			UpdatedAt:  pu.UpdatedAt,
 		})
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
@@ -829,7 +829,10 @@ func (s *Service) UpsertProfile(ctx context.Context, profile model.VPNProfile) e
 	if err := s.saveProfiles(profiles); err != nil {
 		return err
 	}
-	return s.SyncVPNProfiles(ctx)
+	if err := s.SyncVPNProfiles(ctx); err != nil {
+		log.Printf("service UpsertProfile sync warning name=%q error=%v", profile.Name, err)
+	}
+	return nil
 }
 
 func (s *Service) DeleteProfile(ctx context.Context, name string) error {
@@ -933,4 +936,224 @@ func (s *Service) Health(ctx context.Context) map[string]any {
 		"plugin_listen_port": settings.PluginListenPort,
 		"profiles_count":     len(profiles),
 	}
+}
+
+func (s *Service) appPoliciesPath() string {
+	if s.pki == nil || strings.TrimSpace(s.pki.DataDir) == "" {
+		return filepath.Join(".", "agent-data", "app_policies.json")
+	}
+	return filepath.Join(s.pki.DataDir, "app_policies.json")
+}
+
+func (s *Service) appPolicyViolationsPath() string {
+	if s.pki == nil || strings.TrimSpace(s.pki.DataDir) == "" {
+		return filepath.Join(".", "agent-data", "app_policy_violations.json")
+	}
+	return filepath.Join(s.pki.DataDir, "app_policy_violations.json")
+}
+
+func (s *Service) loadAppPolicies() ([]model.AppPolicy, error) {
+	path := s.appPoliciesPath()
+	if err := ensureDir(path); err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []model.AppPolicy{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return []model.AppPolicy{}, nil
+	}
+	var out []model.AppPolicy
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []model.AppPolicy{}
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out, nil
+}
+
+func (s *Service) saveAppPolicies(policies []model.AppPolicy) error {
+	path := s.appPoliciesPath()
+	if err := ensureDir(path); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(policies, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+func dedupeStringsFold(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		k := strings.ToLower(v)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+func (s *Service) normalizeAppPolicy(in model.AppPolicy) model.AppPolicy {
+	in.ID = strings.TrimSpace(in.ID)
+	in.Name = strings.TrimSpace(in.Name)
+	in.Mode = strings.TrimSpace(strings.ToLower(in.Mode))
+	if in.Mode == "" {
+		in.Mode = "deny_on_match"
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		in.Message = "У вас обнаружено запрещенное приложение"
+	}
+	patterns := make([]model.AppPolicyPattern, 0, len(in.Patterns))
+	for _, pat := range in.Patterns {
+		pat.Type = strings.TrimSpace(strings.ToLower(pat.Type))
+		if pat.Type == "" {
+			pat.Type = "contains"
+		}
+		pat.Value = strings.TrimSpace(pat.Value)
+		if pat.Value == "" {
+			continue
+		}
+		patterns = append(patterns, pat)
+	}
+	in.Patterns = patterns
+	in.Scope.Profiles = dedupeStringsFold(in.Scope.Profiles)
+	in.Scope.Users = dedupeStringsFold(in.Scope.Users)
+	in.UpdatedAt = time.Now().UTC()
+	return in
+}
+
+func (s *Service) AppPolicies(ctx context.Context) ([]model.AppPolicy, error) {
+	return s.loadAppPolicies()
+}
+
+func (s *Service) UpsertAppPolicy(ctx context.Context, policy model.AppPolicy) error {
+	if strings.TrimSpace(policy.ID) == "" {
+		return errors.New("policy id is required")
+	}
+	if strings.TrimSpace(policy.Name) == "" {
+		policy.Name = policy.ID
+	}
+	policy = s.normalizeAppPolicy(policy)
+	policies, err := s.loadAppPolicies()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range policies {
+		if strings.EqualFold(strings.TrimSpace(policies[i].ID), policy.ID) {
+			policies[i] = policy
+			found = true
+			break
+		}
+	}
+	if !found {
+		policies = append(policies, policy)
+	}
+	return s.saveAppPolicies(policies)
+}
+
+func (s *Service) DeleteAppPolicy(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("policy id is required")
+	}
+	policies, err := s.loadAppPolicies()
+	if err != nil {
+		return err
+	}
+	out := make([]model.AppPolicy, 0, len(policies))
+	for _, p := range policies {
+		if !strings.EqualFold(strings.TrimSpace(p.ID), id) {
+			out = append(out, p)
+		}
+	}
+	return s.saveAppPolicies(out)
+}
+
+func (s *Service) ResolveAppPolicy(ctx context.Context, username, profile string) (model.AppPolicyResolved, error) {
+	policies, err := s.loadAppPolicies()
+	if err != nil {
+		return model.AppPolicyResolved{}, err
+	}
+	username = strings.TrimSpace(username)
+	profile = strings.TrimSpace(profile)
+	if profile == "" && username != "" {
+		profile = s.userProfile(username)
+	}
+	resolved := model.AppPolicyResolved{
+		PolicyVersion: fmt.Sprintf("%d", time.Now().UTC().Unix()),
+		Username:      username,
+		Profile:       profile,
+		Policies:      []model.AppPolicy{},
+	}
+	for _, p := range policies {
+		if !p.Enabled {
+			continue
+		}
+		match := p.Scope.AllUsers || (len(p.Scope.Profiles) == 0 && len(p.Scope.Users) == 0)
+		if !match && username != "" {
+			for _, u := range p.Scope.Users {
+				if strings.EqualFold(strings.TrimSpace(u), username) {
+					match = true
+					break
+				}
+			}
+		}
+		if !match && profile != "" {
+			for _, pr := range p.Scope.Profiles {
+				if strings.EqualFold(strings.TrimSpace(pr), profile) {
+					match = true
+					break
+				}
+			}
+		}
+		if match {
+			resolved.Policies = append(resolved.Policies, p)
+		}
+	}
+	return resolved, nil
+}
+
+func (s *Service) RecordAppPolicyViolation(ctx context.Context, v model.AppPolicyViolation) error {
+	path := s.appPolicyViolationsPath()
+	if err := ensureDir(path); err != nil {
+		return err
+	}
+	v.Username = strings.TrimSpace(v.Username)
+	v.Profile = strings.TrimSpace(v.Profile)
+	v.PolicyID = strings.TrimSpace(v.PolicyID)
+	v.Action = strings.TrimSpace(v.Action)
+	v.Source = strings.TrimSpace(v.Source)
+	if v.OccurredAt.IsZero() {
+		v.OccurredAt = time.Now().UTC()
+	}
+	var items []model.AppPolicyViolation
+	raw, err := os.ReadFile(path)
+	if err == nil && len(raw) > 0 {
+		_ = json.Unmarshal(raw, &items)
+	}
+	items = append(items, v)
+	if len(items) > 2000 {
+		items = items[len(items)-2000:]
+	}
+	b, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
 }

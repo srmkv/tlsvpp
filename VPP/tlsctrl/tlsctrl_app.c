@@ -11,6 +11,13 @@
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include <vppinfra/unix.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+#define TLSCTRL_AGENT_HTTP_HOST "127.0.0.1"
+#define TLSCTRL_AGENT_HTTP_PORT 9080
 
 static inline u64
 tlsctrl_now_unix_ns (void)
@@ -181,6 +188,168 @@ static int
 tlsctrl_case_equal_n (const u8 *a, const char *b, u32 len)
 {
   return strncasecmp ((const char *) a, b, len) == 0;
+}
+
+static u32 tlsctrl_find_header_end (u8 *data);
+static u32 tlsctrl_parse_content_length (u8 *data, u32 header_end);
+
+
+static const char *
+tlsctrl_http_status_text (int code)
+{
+  switch (code)
+    {
+    case 200:
+      return "OK";
+    case 400:
+      return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 403:
+      return "Forbidden";
+    case 404:
+      return "Not Found";
+    case 423:
+      return "Locked";
+    case 500:
+      return "Internal Server Error";
+    case 502:
+      return "Bad Gateway";
+    default:
+      return "OK";
+    }
+}
+
+static int
+tlsctrl_socket_send_all (int fd, const u8 *buf, u32 len)
+{
+  u32 sent = 0;
+  while (sent < len)
+    {
+      ssize_t n = send (fd, buf + sent, len - sent, 0);
+      if (n < 0)
+        {
+          if (errno == EINTR)
+            continue;
+          return -1;
+        }
+      if (n == 0)
+        return -1;
+      sent += (u32) n;
+    }
+  return 0;
+}
+
+
+static int
+tlsctrl_policy_decision_denied (u8 *body)
+{
+  if (!body || !vec_len (body))
+    return 0;
+  return strstr ((const char *) body, "\"allow\":false") != 0;
+}
+
+static int
+tlsctrl_http_post_agent_json (const char *path, u8 *json_body, int *status_code,
+                              u8 **response_body)
+{
+  int fd = -1;
+  int rv = -1;
+  struct sockaddr_in sa;
+  u8 *request = 0;
+  u8 *response = 0;
+  u32 header_end, body_offset, content_length, available;
+  char line[64];
+  int code = 502;
+
+  if (status_code)
+    *status_code = 502;
+  if (response_body)
+    *response_body = 0;
+
+  fd = socket (AF_INET, SOCK_STREAM, 0);
+  if (fd < 0)
+    goto done;
+
+  clib_memset (&sa, 0, sizeof (sa));
+  sa.sin_family = AF_INET;
+  sa.sin_port = htons (TLSCTRL_AGENT_HTTP_PORT);
+  if (inet_pton (AF_INET, TLSCTRL_AGENT_HTTP_HOST, &sa.sin_addr) != 1)
+    goto done;
+
+  if (connect (fd, (struct sockaddr *) &sa, sizeof (sa)) != 0)
+    goto done;
+
+  {
+    u32 body_len = json_body ? vec_len (json_body) : 0;
+    if (body_len && json_body[body_len - 1] == 0)
+      body_len -= 1;
+    request = format (
+      0,
+      "POST %s HTTP/1.1\r\n"
+      "Host: %s:%u\r\n"
+      "Content-Type: application/json\r\n"
+      "Content-Length: %u\r\n"
+      "Connection: close\r\n"
+      "\r\n"
+      "%.*s",
+      path, TLSCTRL_AGENT_HTTP_HOST, TLSCTRL_AGENT_HTTP_PORT,
+      body_len, body_len, json_body ? (const char *) json_body : "");
+  }
+
+  if (tlsctrl_socket_send_all (fd, request, vec_len (request)) != 0)
+    goto done;
+
+  while (1)
+    {
+      u8 buf[2048];
+      ssize_t n = recv (fd, buf, sizeof (buf), 0);
+      u32 old_len;
+      if (n < 0)
+        {
+          if (errno == EINTR)
+            continue;
+          goto done;
+        }
+      if (n == 0)
+        break;
+      old_len = vec_len (response);
+      vec_validate (response, old_len + (u32) n);
+      clib_memcpy_fast (response + old_len, buf, (u32) n);
+      response[old_len + (u32) n] = 0;
+    }
+
+  if (!response || vec_len (response) < 12)
+    goto done;
+
+  clib_memset (line, 0, sizeof (line));
+  clib_memcpy_fast (line, response,
+                    clib_min ((u32) sizeof (line) - 1, vec_len (response)));
+  if (sscanf (line, "HTTP/%*s %d", &code) != 1)
+    code = 502;
+
+  header_end = tlsctrl_find_header_end (response);
+  if (header_end == ~0)
+    goto done;
+
+  body_offset = header_end + 4;
+  content_length = tlsctrl_parse_content_length (response, header_end);
+  available = vec_len (response) > body_offset ? vec_len (response) - body_offset : 0;
+  if (content_length == 0 || content_length > available)
+    content_length = available;
+
+  if (response_body)
+    *response_body = tlsctrl_dup_c_string (response + body_offset, content_length);
+  if (status_code)
+    *status_code = code;
+  rv = 0;
+
+done:
+  if (fd >= 0)
+    close (fd);
+  vec_free (request);
+  vec_free (response);
+  return rv;
 }
 
 static u32
@@ -958,6 +1127,16 @@ tlsctrl_build_response (tlsctrl_conn_t *conn, int code, const char *status,
                         const char *ctype, u8 *payload)
 {
   tlsctrl_main_t *tm = &tlsctrl_main;
+  u32 payload_len = 0;
+  const char *payload_text = "";
+
+  if (payload)
+    {
+      payload_len = vec_len (payload);
+      if (payload_len && payload[payload_len - 1] == 0)
+        payload_len -= 1;
+      payload_text = (const char *) payload;
+    }
 
   vec_free (conn->response_data);
   conn->response_data = format (
@@ -968,8 +1147,8 @@ tlsctrl_build_response (tlsctrl_conn_t *conn, int code, const char *status,
     "Connection: close\r\n"
     "Server: tlsctrl-phase3b\r\n"
     "\r\n"
-    "%v",
-    code, status, ctype, payload ? vec_len (payload) : 0, payload);
+    "%.*s",
+    code, status, ctype, payload_len, payload_len, payload_text);
   conn->response_ready = 1;
   conn->response_complete = 0;
   conn->tx_offset = 0;
@@ -1237,6 +1416,102 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
       tlsctrl_build_response (conn, 200, "OK", "application/json", json);
     }
   else if (!strcmp ((char *) method, "POST") &&
+           !strncmp ((char *) target, "/api/client/policy-bootstrap", 28))
+    {
+      int proxy_status = 502;
+      u8 *proxy_req = 0;
+      u8 *proxy_resp = 0;
+      username = tlsctrl_json_extract_string (body, "username");
+      profile = tlsctrl_json_extract_string (body, "profile");
+
+      if (!username || !vec_len (username))
+        {
+          vec_free (username);
+          username = tlsctrl_header_value_dup (conn->request_data, header_end,
+                                               "X-Username:");
+        }
+      if (!profile || !vec_len (profile))
+        {
+          vec_free (profile);
+          profile = tlsctrl_header_value_dup (conn->request_data, header_end,
+                                              "X-Profile:");
+        }
+      if (!username || !vec_len (username))
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"username required\"}");
+          goto done;
+        }
+      if (tlsctrl_http_authorize_user (username, peer_cert_serial, 0, &auth_status) <= 0)
+        {
+          if (auth_status == 423)
+            tlsctrl_build_json_response (conn, 423, "Locked",
+                                         "{\"ok\":false,\"error\":\"disconnected by admin\"}");
+          else
+            tlsctrl_build_json_response (conn, 401, "Unauthorized",
+                                         "{\"ok\":false,\"error\":\"unauthorized\"}");
+          goto done;
+        }
+      proxy_req = tlsctrl_dup_string0 (body);
+      if (!proxy_req || !vec_len (proxy_req))
+        proxy_req = format (0,
+                            "{\"username\":\"%s\",\"profile\":\"%s\",\"apps\":[]}",
+                            username ? (char *) username : "",
+                            profile ? (char *) profile : "");
+      if (tlsctrl_http_post_agent_json ("/api/plugin/app-policy/evaluate",
+                                        proxy_req, &proxy_status,
+                                        &proxy_resp) != 0)
+        {
+          tlsctrl_build_json_response (conn, 502, "Bad Gateway",
+                                       "{\"ok\":false,\"error\":\"policy evaluate failed\"}");
+          vec_free (proxy_req);
+          vec_free (proxy_resp);
+          goto done;
+        }
+      tlsctrl_build_response (conn, proxy_status,
+                              tlsctrl_http_status_text (proxy_status),
+                              "application/json", proxy_resp);
+      vec_free (proxy_req);
+      vec_free (proxy_resp);
+    }
+  else if (!strcmp ((char *) method, "POST") &&
+           !strncmp ((char *) target, "/api/client/policy-violation", 28))
+    {
+      int proxy_status = 502;
+      u8 *proxy_resp = 0;
+      username = tlsctrl_json_extract_string (body, "username");
+      if (!username || !vec_len (username))
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"username required\"}");
+          goto done;
+        }
+      if (tlsctrl_http_authorize_user (username, peer_cert_serial, 0, &auth_status) <= 0)
+        {
+          if (auth_status == 423)
+            tlsctrl_build_json_response (conn, 423, "Locked",
+                                         "{\"ok\":false,\"error\":\"disconnected by admin\"}");
+          else
+            tlsctrl_build_json_response (conn, 401, "Unauthorized",
+                                         "{\"ok\":false,\"error\":\"unauthorized\"}");
+          goto done;
+        }
+      if (tlsctrl_http_post_agent_json ("/api/plugin/app-policy/violation",
+                                        body, &proxy_status, &proxy_resp) != 0)
+        {
+          tlsctrl_build_json_response (conn, 502, "Bad Gateway",
+                                       "{\"ok\":false,\"error\":\"policy violation report failed\"}");
+          vec_free (proxy_resp);
+          goto done;
+        }
+      tlsctrl_build_response (conn, proxy_status,
+                              tlsctrl_http_status_text (proxy_status),
+                              "application/json", proxy_resp);
+      vec_free (proxy_resp);
+    }
+  else if (!strcmp ((char *) method, "POST") &&
            !strncmp ((char *) target, "/api/client/vpn-bind", 20))
     {
       username = tlsctrl_json_extract_string (body, "username");
@@ -1335,6 +1610,8 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
   else if (!strcmp ((char *) method, "POST") &&
            !strncmp ((char *) target, "/api/client/apps", 16))
     {
+      int eval_status = 502;
+      u8 *eval_resp = 0;
       u32 count = 0;
       username = tlsctrl_json_extract_string (body, "username");
       if (!username || !vec_len (username))
@@ -1359,6 +1636,20 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
       client = tlsctrl_client_find_internal (username, 1);
       tlsctrl_client_touch_apps_locked (client, count, body);
       clib_spinlock_unlock_if_init (&tm->clients_lock);
+      if (tlsctrl_http_post_agent_json ("/api/plugin/app-policy/evaluate",
+                                        body, &eval_status, &eval_resp) == 0 &&
+          tlsctrl_policy_decision_denied (eval_resp))
+        {
+          tlsctrl_vpn_tunnel_close ((char *) username);
+          clib_spinlock_lock_if_init (&tm->clients_lock);
+          client = tlsctrl_client_find_internal (username, 1);
+          tlsctrl_client_mark_disconnected_locked (client);
+          clib_spinlock_unlock_if_init (&tm->clients_lock);
+          tlsctrl_build_response (conn, 423, "Locked", "application/json", eval_resp);
+          vec_free (eval_resp);
+          goto done;
+        }
+      vec_free (eval_resp);
       tlsctrl_build_json_response (conn, 200, "OK", "{\"ok\":true}");
     }
   else
