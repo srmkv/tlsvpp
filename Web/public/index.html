@@ -224,7 +224,7 @@
         <div class="row" style="justify-content:space-between">
           <div>
             <div style="font-weight:800">Политики запрещённых приложений</div>
-            <div class="muted small">Server-side политика для варианта Б: web → agent → plugin → client.</div>
+            <div class="muted small">Для каждой политики можно отдельно включать клиентскую блокировку и серверную детекцию.</div>
           </div>
           <div class="actions">
             <button type="button" id="btnRefreshPolicies">Обновить политики</button>
@@ -234,9 +234,9 @@
         <div class="tableWrap" style="max-height:34vh">
           <table>
             <thead>
-              <tr><th>Политика</th><th>Режим</th><th>Scope</th><th>Шаблоны</th><th>Сообщение</th><th>Статус</th><th>Действия</th></tr>
+              <tr><th>Политика</th><th>Режим</th><th>Где проверять</th><th>Scope</th><th>Шаблоны</th><th>Сообщение</th><th>Статус</th><th>Действия</th></tr>
             </thead>
-            <tbody id="policyRows"><tr><td colspan="7" class="muted">Нет данных</td></tr></tbody>
+            <tbody id="policyRows"><tr><td colspan="8" class="muted">Нет данных</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -244,7 +244,7 @@
         <div class="sectionHead">
           <div>
             <div style="font-weight:800">Логика политики</div>
-            <div class="muted small">Клиент получает политику при bootstrap от plugin, локально проверяет список приложений и не продолжает bind при совпадении.</div>
+            <div class="muted small">Клиентская проверка блокирует подключение до bind. Серверная проверка не блокирует, а только детектирует и показывает нарушение в web.</div>
           </div>
         </div>
         <div class="emptyNote">Рекомендуемый режим: <b>deny_on_match</b>. Шаблоны можно задавать как подстроки или regex через разделитель новой строки. Пример: <span class="mono">vpn</span>, <span class="mono">mattermost</span>, <span class="mono">wireguard|openvpn</span>.</div>
@@ -254,8 +254,8 @@
             <div style="font-weight:800;margin-top:6px">Профиль / пользователь / все пользователи</div>
           </div>
           <div class="card" style="box-shadow:none;background:#f9fbfe">
-            <div class="muted tiny">Действие</div>
-            <div style="font-weight:800;margin-top:6px">Запретить подключение + показать текст ошибки</div>
+            <div class="muted tiny">Поведение</div>
+            <div style="font-weight:800;margin-top:6px">Client-check блокирует connect, server-check только детектирует</div>
           </div>
         </div>
       </div>
@@ -541,6 +541,13 @@
     </div>
     <div class="row">
       <div class="field" style="flex:2 1 420px"><label for="policyMessage">Сообщение пользователю</label><input id="policyMessage" placeholder="У вас обнаружено запрещенное приложение" /></div>
+      <div class="field" style="flex:1 1 320px">
+        <label>Где проверять</label>
+        <div class="row" style="gap:18px;align-items:center;padding-top:10px">
+          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="policyCheckOnClient" checked />проверять на клиенте</label>
+          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="policyCheckOnServer" />проверять на сервере</label>
+        </div>
+      </div>
     </div>
     <div class="row">
       <div class="field" style="flex:2 1 100%">
@@ -591,6 +598,6 @@ regex:wireguard|openvpn"></textarea></div>
   </div>
 </div>
 
-<script src="./app.js?v=20260407-policy-server-eval-fixed10"></script>
+<script src="./app.js?v=20260407-policy-check-modes-fixed18"></script>
 </body>
 </html>

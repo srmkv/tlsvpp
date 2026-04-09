@@ -1,0 +1,12 @@
+Исправление:
+- найдено, что клиент не отправлял X-Client-MAC вообще
+- applyClientHeaders теперь добавляет:
+  - X-Client-MAC
+  - X-System-User
+  - X-OS-Type
+  - X-OS-Version
+- эти заголовки теперь ставятся на все запросы:
+  - /api/v1/clients
+  - /api/v1/commands
+  - /api/v1/apps/report
+  - /api/v1/disconnect

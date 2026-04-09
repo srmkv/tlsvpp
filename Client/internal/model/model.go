@@ -87,13 +87,15 @@ type AppPolicyScope struct {
 }
 
 type AppPolicy struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Enabled  bool               `json:"enabled"`
-	Mode     string             `json:"mode"`
-	Message  string             `json:"message"`
-	Patterns []AppPolicyPattern `json:"patterns"`
-	Scope    AppPolicyScope     `json:"scope"`
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Enabled       bool               `json:"enabled"`
+	Mode          string             `json:"mode"`
+	CheckOnClient bool               `json:"check_on_client,omitempty"`
+	CheckOnServer bool               `json:"check_on_server,omitempty"`
+	Message       string             `json:"message"`
+	Patterns      []AppPolicyPattern `json:"patterns"`
+	Scope         AppPolicyScope     `json:"scope"`
 }
 
 type AppPolicyResolveResponse struct {

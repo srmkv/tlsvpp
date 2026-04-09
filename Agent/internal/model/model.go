@@ -42,21 +42,26 @@ type VPNProfile struct {
 }
 
 type Session struct {
-	Username      string             `json:"username"`
-	CertSerial    string             `json:"cert_serial"`
-	SystemUser    string             `json:"system_user"`
-	OSName        string             `json:"os_name"`
-	OSVersion     string             `json:"os_version"`
-	SystemUptime  string             `json:"system_uptime"`
-	IP            string             `json:"ip"`
-	MAC           string             `json:"mac"`
-	Source        string             `json:"source"`
-	Interfaces    []NetworkInterface `json:"interfaces,omitempty"`
-	Connected     bool               `json:"connected"`
-	ConnectedAt   time.Time          `json:"connected_at"`
-	LastSeen      time.Time          `json:"last_seen"`
-	AppsCount     int                `json:"apps_count"`
-	AppsUpdatedAt time.Time          `json:"apps_updated_at"`
+	Username          string             `json:"username"`
+	CertSerial        string             `json:"cert_serial"`
+	SystemUser        string             `json:"system_user"`
+	OSName            string             `json:"os_name"`
+	OSVersion         string             `json:"os_version"`
+	SystemUptime      string             `json:"system_uptime"`
+	IP                string             `json:"ip"`
+	MAC               string             `json:"mac"`
+	Source            string             `json:"source"`
+	Interfaces        []NetworkInterface `json:"interfaces,omitempty"`
+	Connected         bool               `json:"connected"`
+	ConnectedAt       time.Time          `json:"connected_at"`
+	LastSeen          time.Time          `json:"last_seen"`
+	AppsCount         int                `json:"apps_count"`
+	AppsUpdatedAt     time.Time          `json:"apps_updated_at"`
+	PolicyBlocked     bool               `json:"policy_blocked,omitempty"`
+	PolicyBlockedAt   time.Time          `json:"policy_blocked_at,omitempty"`
+	PolicyName        string             `json:"policy_name,omitempty"`
+	PolicyMessage     string             `json:"policy_message,omitempty"`
+	PolicyMatchedApps []string           `json:"policy_matched_apps,omitempty"`
 }
 
 type AppInfo struct {
@@ -82,10 +87,11 @@ type AppsSnapshot struct {
 }
 
 type AppsView struct {
-	Username string        `json:"username"`
-	Pending  bool          `json:"pending"`
-	Command  *Command      `json:"command,omitempty"`
-	Report   *AppsSnapshot `json:"report,omitempty"`
+	Username            string              `json:"username"`
+	Pending             bool                `json:"pending"`
+	Command             *Command            `json:"command,omitempty"`
+	Report              *AppsSnapshot       `json:"report,omitempty"`
+	LastPolicyViolation *AppPolicyViolation `json:"last_policy_violation,omitempty"`
 }
 
 type ClientHeartbeat struct {
@@ -132,14 +138,16 @@ type AppPolicyScope struct {
 }
 
 type AppPolicy struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	Enabled   bool               `json:"enabled"`
-	Mode      string             `json:"mode"`
-	Patterns  []AppPolicyPattern `json:"patterns,omitempty"`
-	Message   string             `json:"message,omitempty"`
-	Scope     AppPolicyScope     `json:"scope,omitempty"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Enabled       bool               `json:"enabled"`
+	Mode          string             `json:"mode"`
+	CheckOnClient bool               `json:"check_on_client,omitempty"`
+	CheckOnServer bool               `json:"check_on_server,omitempty"`
+	Patterns      []AppPolicyPattern `json:"patterns,omitempty"`
+	Message       string             `json:"message,omitempty"`
+	Scope         AppPolicyScope     `json:"scope,omitempty"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 type AppPolicyResolved struct {
@@ -153,6 +161,8 @@ type AppPolicyViolation struct {
 	Username    string    `json:"username"`
 	Profile     string    `json:"profile,omitempty"`
 	PolicyID    string    `json:"policy_id,omitempty"`
+	PolicyName  string    `json:"policy_name,omitempty"`
+	Message     string    `json:"message,omitempty"`
 	MatchedApps []string  `json:"matched_apps,omitempty"`
 	Action      string    `json:"action,omitempty"`
 	Source      string    `json:"source,omitempty"`
@@ -200,6 +210,7 @@ func (l *AppInventoryList) UnmarshalJSON(data []byte) error {
 type AppPolicyEvaluateRequest struct {
 	Username string           `json:"username"`
 	Profile  string           `json:"profile,omitempty"`
+	Stage    string           `json:"stage,omitempty"`
 	Apps     AppInventoryList `json:"apps,omitempty"`
 }
 

@@ -621,6 +621,55 @@ tlsctrl_url_decode_dup (const u8 *src, u32 len)
   return dst;
 }
 
+
+static u8 *
+tlsctrl_hex_decode_dup (u8 *src)
+{
+  u8 *dst = 0;
+  u32 i;
+  u32 len;
+
+  if (!src)
+    return 0;
+
+  len = vec_len (src);
+  if (len == 0)
+    return 0;
+  if (src[len - 1] == 0)
+    len -= 1;
+  if ((len & 1) != 0)
+    return 0;
+
+  for (i = 0; i < len; i += 2)
+    {
+      u8 v = (tlsctrl_hex_value (src[i]) << 4) | tlsctrl_hex_value (src[i + 1]);
+      vec_add1 (dst, v);
+    }
+  return dst;
+}
+
+static u8 *
+tlsctrl_hex_encode_dup (const u8 *src, u32 len)
+{
+  static const char *hex = "0123456789abcdef";
+  u8 *dst = 0;
+  u32 i;
+
+  if (!src || len == 0)
+    {
+      vec_add1 (dst, 0);
+      return dst;
+    }
+
+  for (i = 0; i < len; i++)
+    {
+      vec_add1 (dst, hex[(src[i] >> 4) & 0xf]);
+      vec_add1 (dst, hex[src[i] & 0xf]);
+    }
+  vec_add1 (dst, 0);
+  return dst;
+}
+
 static u8 *
 tlsctrl_query_value_dup (u8 *target, const char *key)
 {
@@ -1608,6 +1657,125 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
       tlsctrl_build_response (conn, 200, "OK", "application/json", json);
     }
   else if (!strcmp ((char *) method, "POST") &&
+           !strncmp ((char *) target, "/api/client/vpn-frame", 21))
+    {
+      tlsctrl_vpn_frame_meta_t meta;
+      u8 *frame_hex = 0;
+      u8 *frame = 0;
+      u8 *out_payload = 0;
+      int rv = 0;
+      username = tlsctrl_json_extract_string (body, "username");
+      if (!username || !vec_len (username))
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"username required\"}");
+          goto done;
+        }
+      if (tlsctrl_http_authorize_user (username, peer_cert_serial, 0, &auth_status) <= 0)
+        {
+          if (auth_status == 423)
+            tlsctrl_build_json_response (conn, 423, "Locked",
+                                         "{\"ok\":false,\"error\":\"disconnected by admin\"}");
+          else
+            tlsctrl_build_json_response (conn, 401, "Unauthorized",
+                                         "{\"ok\":false,\"error\":\"unauthorized\"}");
+          goto done;
+        }
+      if (body)
+        {
+          u8 *tid = tlsctrl_json_extract_string (body, "tunnel_id");
+          if (tid && vec_len (tid))
+            tunnel_id = atoi ((char *) tid);
+          vec_free (tid);
+        }
+      frame_hex = tlsctrl_json_extract_string (body, "frame_hex");
+      if (!frame_hex || !vec_len (frame_hex))
+        {
+          /* dataplane keepalive: allow empty frame payload */
+          vec_free (frame_hex);
+          tlsctrl_build_json_response (conn, 200, "OK",
+                                       "{\"ok\":true,\"keepalive\":true}");
+          goto done;
+        }
+      frame = tlsctrl_hex_decode_dup (frame_hex);
+      vec_free (frame_hex);
+      if (!frame)
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"bad frame hex\"}");
+          goto done;
+        }
+      if (tunnel_id == 0)
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"tunnel_id required\"}");
+          vec_free (frame);
+          goto done;
+        }
+      rv = tlsctrl_vpn_frame_rx (tunnel_id, frame, vec_len (frame), &meta, &out_payload);
+      vec_free (frame);
+      vec_free (out_payload);
+      if (rv != 0)
+        {
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"frame rx failed\"}");
+          goto done;
+        }
+      tlsctrl_build_json_response (conn, 200, "OK", "{\"ok\":true}");
+    }
+  else if (!strcmp ((char *) method, "GET") &&
+           !strncmp ((char *) target, "/api/client/vpn-poll", 20))
+    {
+      u8 *frame = 0;
+      u8 *frame_hex = 0;
+      u8 *json = 0;
+      u64 poll_tunnel_id = 0;
+      int dq_rv;
+
+      username = tlsctrl_query_value_dup (target, "username");
+      if (!username || !vec_len (username))
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"username query required\"}");
+          goto done;
+        }
+      if (tlsctrl_http_authorize_user (username, peer_cert_serial, 0, &auth_status) <= 0)
+        {
+          if (auth_status == 423)
+            tlsctrl_build_json_response (conn, 423, "Locked",
+                                         "{\"ok\":false,\"error\":\"disconnected by admin\"}");
+          else
+            tlsctrl_build_json_response (conn, 401, "Unauthorized",
+                                         "{\"ok\":false,\"error\":\"unauthorized\"}");
+          goto done;
+        }
+
+      dq_rv = tlsctrl_vpn_dp_dequeue_frame_by_username ((const char *) username,
+                                                        &poll_tunnel_id,
+                                                        &frame);
+      if (dq_rv == 0 && frame)
+        {
+          frame_hex = tlsctrl_hex_encode_dup (frame, vec_len (frame));
+          json = format (0,
+                         "{\"ok\":true,\"tunnel_id\":\"%llu\",\"frame_hex\":\"%s\"}",
+                         (unsigned long long) poll_tunnel_id,
+                         frame_hex ? (char *) frame_hex : "");
+          tlsctrl_build_json_response (conn, 200, "OK", (char *) json);
+          vec_free (json);
+          vec_free (frame_hex);
+          vec_free (frame);
+        }
+      else
+        {
+          tlsctrl_build_json_response (conn, 200, "OK", "{\"ok\":true,\"frame_hex\":\"\"}");
+        }
+    }
+
+  else if (!strcmp ((char *) method, "POST") &&
            !strncmp ((char *) target, "/api/client/apps", 16))
     {
       int eval_status = 502;
@@ -1640,13 +1808,8 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
                                         body, &eval_status, &eval_resp) == 0 &&
           tlsctrl_policy_decision_denied (eval_resp))
         {
-          tlsctrl_vpn_tunnel_close ((char *) username);
-          clib_spinlock_lock_if_init (&tm->clients_lock);
-          client = tlsctrl_client_find_internal (username, 1);
-          tlsctrl_client_mark_disconnected_locked (client);
-          clib_spinlock_unlock_if_init (&tm->clients_lock);
-          tlsctrl_build_response (conn, 423, "Locked", "application/json", eval_resp);
           vec_free (eval_resp);
+          tlsctrl_build_json_response (conn, 200, "OK", "{\"ok\":true,\"policy_detected\":true}");
           goto done;
         }
       vec_free (eval_resp);

@@ -24,9 +24,24 @@ func (s *Service) EvaluateAppPolicy(ctx context.Context, req model.AppPolicyEval
 		return decision, nil
 	}
 	items := normalizeInventory(req.Apps)
+	stage := strings.ToLower(strings.TrimSpace(req.Stage))
 	for _, p := range resolved.Policies {
 		if !p.Enabled {
 			continue
+		}
+		switch stage {
+		case "client", "client_preconnect", "preconnect":
+			if !p.CheckOnClient {
+				continue
+			}
+		case "server", "server_detect", "postconnect":
+			if !p.CheckOnServer {
+				continue
+			}
+		default:
+			if !p.CheckOnClient && !p.CheckOnServer {
+				continue
+			}
 		}
 		for _, pat := range p.Patterns {
 			patternText := strings.TrimSpace(pat.Value)

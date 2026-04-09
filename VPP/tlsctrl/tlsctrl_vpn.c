@@ -217,7 +217,12 @@ int tlsctrl_vpn_tunnel_open (const char *username, const char *profile,
   if (rv)
     return rv;
   tlsctrl_vpn_dp_attach (tid, 0);
+  tlsctrl_vpn_dp_configure (tid, assigned_ip ? (char *) *assigned_ip : 0, gateway ? (char *) *gateway : 0, username, profile);
+  tlsctrl_vpn_dp_stage5_bind_identity (tid);
+  tlsctrl_vpn_dp_stage5_mark_route_bound (tid, 1);
+  tlsctrl_vpn_dp_stage7_arm_output (tid);
   tlsctrl_vpn_stream_attach (tid, 0);
+  tlsctrl_vpn_transport_attach (tid, 0);
   if (tunnel_id)
     *tunnel_id = tid;
   return 0;

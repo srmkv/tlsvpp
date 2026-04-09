@@ -327,6 +327,7 @@ tlsctrl_init (vlib_main_t *vm)
   clib_spinlock_init (&tm->clients_lock);
   tlsctrl_reset_counters ();
   tlsctrl_vpn_init (vm);
+  tlsctrl_vpn_stage16_feature_sync ();
   return 0;
 }
 

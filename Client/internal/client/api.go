@@ -274,6 +274,7 @@ func evaluateAppPolicies(cfg state.Config, httpClient *http.Client) (model.AppPo
 	payload := map[string]any{
 		"username": strings.TrimSpace(cfg.Username),
 		"profile":  strings.TrimSpace(cfg.Profile),
+		"stage":    "client",
 		"apps":     inventory,
 	}
 	bodyBytes, err := json.Marshal(payload)
@@ -582,6 +583,7 @@ func reportPolicyDecisionViolation(cfg state.Config, httpClient *http.Client, de
 		"profile":      strings.TrimSpace(cfg.Profile),
 		"policy_id":    policyID,
 		"policy_name":  policyName,
+		"message":      strings.TrimSpace(decision.Message),
 		"matched_apps": matchedApps,
 		"action":       "deny_connect",
 	}
@@ -796,8 +798,9 @@ func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 		Username    string                `json:"username"`
 		CommandID   string                `json:"command_id,omitempty"`
 		GeneratedAt string                `json:"generated_at,omitempty"`
+		Stage       string                `json:"stage,omitempty"`
 		Apps        []model.AppReportItem `json:"apps"`
-	}{Username: strings.TrimSpace(cfg.Username), CommandID: strings.TrimSpace(report.CommandID), GeneratedAt: strings.TrimSpace(report.GeneratedAt), Apps: report.Apps}
+	}{Username: strings.TrimSpace(cfg.Username), CommandID: strings.TrimSpace(report.CommandID), GeneratedAt: strings.TrimSpace(report.GeneratedAt), Stage: "server", Apps: report.Apps}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal apps report: %w", err)

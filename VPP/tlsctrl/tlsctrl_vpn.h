@@ -3,6 +3,7 @@
 
 #include <vlib/vlib.h>
 #include <vppinfra/lock.h>
+#include <vnet/ip/ip.h>
 
 typedef struct
 {
@@ -60,7 +61,53 @@ typedef struct
   u64 ipv4_tx;
   u64 last_rx_unix_ns;
   u64 last_tx_unix_ns;
+  u64 connected_at_unix_ns;
+  u64 last_seen_unix_ns;
+  u32 sw_if_index;
+  u32 fib_index;
+  u32 tx_queue_depth;
+  u32 last_drop_reason;
+  u64 queue_enqueued_frames;
+  u64 queue_dequeued_frames;
+  u64 queue_dropped_frames;
+  u64 queue_enqueue_bytes;
+  u64 queue_dequeue_bytes;
+  u64 queue_drop_bytes;
+  u64 tx_inject_pkts;
+  u64 tx_inject_bytes;
+  u64 tx_lookup_hits;
+  u64 tx_lookup_misses;
+  u64 tx_lookup_drops;
+  u64 tx_probe_pkts;
+  u64 tx_probe_bytes;
+  u64 rx_probe_pkts;
+  u64 rx_probe_bytes;
+  u64 auto_probe_pkts;
+  u64 auto_probe_bytes;
+  u64 auto_bridge_pkts;
+  u64 auto_bridge_bytes;
+  u64 auto_hook_pkts;
+  u64 auto_hook_bytes;
+  u64 session_open_count;
+  u64 session_close_count;
+  u64 session_reset_count;
+  u64 connect_generation;
+  u8 route_bound;
+  u8 tx_ready;
+  u8 tx_hook_armed;
+  u8 stage8_output_enabled;
+  u8 stage9_input_enabled;
+  u8 stage10_bridge_enabled;
+  u8 stage11_auto_enabled;
+  u8 stage13_auto_hook_enabled;
+  u8 *if_name;
+  u8 *assigned_ip;
+  u8 *gateway;
+  u8 *username;
+  u8 *profile_name;
+  u8 **pending_frames;
   u8 running;
+  u8 is_up;
 } tlsctrl_vpn_dp_session_t;
 
 typedef struct
@@ -164,7 +211,35 @@ int tlsctrl_vpn_dp_detach (u64 tunnel_id);
 int tlsctrl_vpn_dp_touch_keepalive (u64 tunnel_id, int outbound);
 int tlsctrl_vpn_dp_note_ipv4 (u64 tunnel_id, u32 bytes, int outbound);
 int tlsctrl_vpn_dp_find_session (u64 tunnel_id, tlsctrl_vpn_dp_session_t **out);
+int tlsctrl_vpn_dp_configure (u64 tunnel_id, const char *assigned_ip, const char *gateway, const char *username, const char *profile_name);
+int tlsctrl_vpn_dp_set_session_handle (u64 tunnel_id, u64 session_handle);
+int tlsctrl_vpn_dp_set_queue_depth (u64 tunnel_id, u32 depth);
+int tlsctrl_vpn_dp_note_drop (u64 tunnel_id, u32 reason);
+int tlsctrl_vpn_dp_lookup_vip (const ip4_address_t *vip, tlsctrl_vpn_dp_session_t **out);
+int tlsctrl_vpn_dp_rx_ipv4_to_vpp (u64 tunnel_id, const u8 *payload, u32 payload_len);
+int tlsctrl_vpn_dp_stage5_bind_identity (u64 tunnel_id);
+int tlsctrl_vpn_dp_stage5_mark_route_bound (u64 tunnel_id, u8 bound);
+int tlsctrl_vpn_dp_tx_ipv4_from_vpp (u64 tunnel_id, const u8 *payload, u32 payload_len, u8 **out_frame);
+int tlsctrl_vpn_dp_tx_ipv4_by_vip (const ip4_address_t *vip, const u8 *payload, u32 payload_len, u8 **out_frame);
+int tlsctrl_vpn_dp_stage6_reconcile (u64 tunnel_id);
+int tlsctrl_vpn_dp_stage7_arm_output (u64 tunnel_id);
+int tlsctrl_vpn_dp_stage7_note_lookup (u64 tunnel_id, int hit);
+int tlsctrl_vpn_dp_stage7_note_drop (u64 tunnel_id);
+int tlsctrl_vpn_dp_stage8_enable_output (u64 tunnel_id, u8 enable);
+int tlsctrl_vpn_dp_stage8_probe_ip4_packet (const u8 *payload, u32 payload_len, u8 **out_frame, u64 *out_tunnel_id);
+int tlsctrl_vpn_dp_stage9_enable_input (u64 tunnel_id, u8 enable);
+int tlsctrl_vpn_dp_stage9_probe_rx_ipv4 (u64 tunnel_id, const u8 *payload, u32 payload_len);
+int tlsctrl_vpn_dp_stage10_enable_bridge (u64 tunnel_id, u8 enable);
+int tlsctrl_vpn_dp_stage10_autoprobe (u64 tunnel_id, const u8 *rx_payload, u32 rx_payload_len, const u8 *tx_payload, u32 tx_payload_len, u8 **out_frame);
+int tlsctrl_vpn_dp_stage11_enable_auto (u64 tunnel_id, u8 enable);
+int tlsctrl_vpn_dp_stage11_tick (u64 tunnel_id, const u8 *payload, u32 payload_len, u8 **out_frame);
+int tlsctrl_vpn_dp_stage13_enable_hook (u64 tunnel_id, u8 enable);
+int tlsctrl_vpn_dp_stage13_note_auto (u64 tunnel_id, u32 bytes);
+int tlsctrl_vpn_dp_enqueue_frame (u64 tunnel_id, u8 *frame);
+int tlsctrl_vpn_dp_dequeue_frame (u64 tunnel_id, u8 **out_frame);
+int tlsctrl_vpn_dp_dequeue_frame_by_username (const char *username, u64 *out_tunnel_id, u8 **out_frame);
 
+void tlsctrl_vpn_stage16_feature_sync (void);
 
 typedef struct
 {
@@ -189,6 +264,10 @@ typedef struct
   u64 rx_drops;
   u64 queue_depth;
   u64 last_error_code;
+  u64 session_open_count;
+  u64 session_close_count;
+  u64 session_reset_count;
+  u64 connect_generation;
   u8 *tun_if_name;
   u8 *assigned_ip;
   u8 *gateway;

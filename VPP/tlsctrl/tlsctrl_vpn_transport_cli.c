@@ -17,8 +17,22 @@ show_tlsctrl_vpn_transport_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cl
   vlib_cli_output (vm, "vpn transport: sessions=%u", vec_len (tlsctrl_vpn_transport_main.sessions));
   vec_foreach (s, tlsctrl_vpn_transport_main.sessions)
     {
+      tlsctrl_vpn_dp_session_t *dp = 0;
+      u64 gen = s->connect_generation;
+      u64 open = s->session_open_count;
+      u64 close = s->session_close_count;
+      u64 reset = s->session_reset_count;
+
+      if (tlsctrl_vpn_dp_find_session (s->tunnel_id, &dp) == 0 && dp)
+        {
+          gen = dp->connect_generation;
+          open = dp->session_open_count;
+          close = dp->session_close_count;
+          reset = dp->session_reset_count;
+        }
+
       vlib_cli_output (vm,
-                       "  tunnel=%llu tun=%s running=%u txp=%llu rxp=%llu txd=%llu rxd=%llu q=%llu err=%llu ip=%s gw=%s dns=%s mtu=%u mss=%u",
+                       "  tunnel=%llu tun=%s running=%u txp=%llu rxp=%llu txd=%llu rxd=%llu q=%llu err=%llu ip=%s gw=%s dns=%s mtu=%u mss=%u gen=%llu open=%llu close=%llu reset=%llu",
                        (unsigned long long) s->tunnel_id,
                        s->tun_if_name ? (char *) s->tun_if_name : "-",
                        s->running,
@@ -31,7 +45,11 @@ show_tlsctrl_vpn_transport_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cl
                        s->assigned_ip ? (char *) s->assigned_ip : "-",
                        s->gateway ? (char *) s->gateway : "-",
                        s->dns_servers ? (char *) s->dns_servers : "-",
-                       s->mtu, s->mss_clamp);
+                       s->mtu, s->mss_clamp,
+                       (unsigned long long) gen,
+                       (unsigned long long) open,
+                       (unsigned long long) close,
+                       (unsigned long long) reset);
     }
   return 0;
 }

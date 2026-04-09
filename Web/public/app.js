@@ -73,6 +73,7 @@ function fmtDate(v) {
 function normalizeBase(v) { return (v || '').trim().replace(/\/+$/, ''); }
 function splitCSV(v) { return String(v || '').split(',').map(x => x.trim()).filter(Boolean); }
 function csvString(v) { return Array.isArray(v) ? v.join(', ') : (v || ''); }
+function escapeRegex(v) { return String(v ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function numOrZero(v) { const n = parseInt(String(v || '').trim(), 10); return Number.isFinite(n) ? n : 0; }
 function formatInterfaces(interfaces) {
   if (!Array.isArray(interfaces) || !interfaces.length) return '—';
@@ -93,6 +94,7 @@ function stateIcon(kind, label, title) { return `<span class="stateDot ${kind}" 
 function accountBadge(row) { return row.enabled ? stateIcon('stateOn', '✓', 'Учётка включена') : stateIcon('stateBad', '×', 'Учётка выключена'); }
 function sessionBadge(row) {
   if (row.connected) return stateIcon('stateOn', 'A', 'Agent session активна');
+  if (row.policy_blocked) return stateIcon('stateBad', 'A', `Подключение заблокировано политикой${row.policy_name ? ': ' + row.policy_name : ''}`);
   const reasons = getReasonStore();
   if (reasons[row.username] === 'admin_disconnect') return stateIcon('stateWarn', 'A', 'Agent session отключена сервером');
   return stateIcon('stateOff', 'A', 'Agent session неактивна');
@@ -101,8 +103,16 @@ function profileBadge(row) {
   if (row.profile) return stateIcon('stateInfo', 'P', `Профиль: ${row.profile}`);
   return stateIcon('stateWarn', 'P', 'Профиль не назначен');
 }
+function policyBadge(row) {
+  if (row.policy_blocked) {
+    const apps = Array.isArray(row.policy_matched_apps) && row.policy_matched_apps.length ? '\n' + row.policy_matched_apps.join(', ') : '';
+    return stateIcon('stateBad', '!', `${row.policy_name || 'Политика'}${apps}`);
+  }
+  return '';
+}
 function runtimeHintBadge(row) {
   if (row.connected) return stateIcon('stateInfo', 'R', 'Runtime подтверждён');
+  if (row.policy_blocked) return stateIcon('stateBad', 'R', row.policy_message || 'Подключение заблокировано политикой');
   return stateIcon('stateOff', 'R', 'Runtime не подтверждён');
 }
 function buildUserMenu(username, enabled) {
@@ -211,7 +221,8 @@ function mergedRows() {
       profile: u.profile || '',
       connected: false,
       ip: '—', mac: '—', system_user: '—', os_name: '—', os_version: '—', system_uptime: '—',
-      source: '—', connected_at: '', last_seen: '', apps_count: 0, apps_updated_at: '', interfaces: []
+      source: '—', connected_at: '', last_seen: '', apps_count: 0, apps_updated_at: '', interfaces: [],
+      policy_blocked: false, policy_blocked_at: '', policy_name: '', policy_message: '', policy_matched_apps: []
     });
   }
   for (const s of sessions || []) {
@@ -230,10 +241,16 @@ function mergedRows() {
     row.apps_updated_at = s.apps_updated_at || '';
     row.cert_serial = s.cert_serial || row.cert_serial || '—';
     row.interfaces = Array.isArray(s.interfaces) ? s.interfaces : [];
+    row.policy_blocked = !!s.policy_blocked;
+    row.policy_blocked_at = s.policy_blocked_at || '';
+    row.policy_name = s.policy_name || '';
+    row.policy_message = s.policy_message || '';
+    row.policy_matched_apps = Array.isArray(s.policy_matched_apps) ? s.policy_matched_apps : [];
     map.set(row.username, row);
   }
   return Array.from(map.values()).sort((a, b) => {
     if ((!!a.connected) !== (!!b.connected)) return a.connected ? -1 : 1;
+    if ((!!a.policy_blocked) !== (!!b.policy_blocked)) return a.policy_blocked ? -1 : 1;
     return String(a.username).localeCompare(String(b.username), 'ru');
   });
 }
@@ -241,8 +258,9 @@ function updateHistory(rows) {
   const history = getHistoryStore();
   const reasons = getReasonStore();
   for (const row of rows) {
-    const status = row.connected ? 'connected' : (reasons[row.username] === 'admin_disconnect' ? 'disconnected_by_admin' : 'disconnected');
-    const item = { at: new Date().toISOString(), status, cert_serial: row.cert_serial || '', connected_at: row.connected_at || '', last_seen: row.last_seen || row.user_last_seen || '', ip: row.ip || '—', mac: row.mac || '—', source: row.source || '—', system_user: row.system_user || '—', os_name: row.os_name || '—', os_version: row.os_version || '—', system_uptime: row.system_uptime || '—' };
+    const status = row.connected ? 'connected' : (row.policy_blocked ? 'blocked_by_policy' : (reasons[row.username] === 'admin_disconnect' ? 'disconnected_by_admin' : 'disconnected'));
+    const item = { at: row.policy_blocked_at || new Date().toISOString(), status, cert_serial: row.cert_serial || '', connected_at: row.connected_at || '', last_seen: row.last_seen || row.user_last_seen || '', ip: row.ip || '—', mac: row.mac || '—', source: row.source || '—', system_user: row.system_user || '—', os_name: row.os_name || '—', os_version: row.os_version || '—', system_uptime: row.system_uptime || '—', policy_name: row.policy_name || '', policy_message: row.policy_message || '', policy_matched_apps: Array.isArray(row.policy_matched_apps) ? row.policy_matched_apps.slice() : [] };
+
     const list = Array.isArray(history[row.username]) ? history[row.username] : [];
     const prev = list[0];
     const transition = !prev || prev.status !== item.status || prev.cert_serial !== item.cert_serial || prev.ip !== item.ip || prev.mac !== item.mac || prev.source !== item.source || prev.connected_at !== item.connected_at;
@@ -277,7 +295,7 @@ function renderHealth() {
     byId('kpiProfilesMeta').textContent = `С pool: ${withPool}, full-tunnel: ${profiles.filter(p => p.full_tunnel).length}`;
   }
   if (byId('kpiUsers')) byId('kpiUsers').textContent = String(users.length);
-  if (byId('kpiUsersMeta')) byId('kpiUsersMeta').textContent = `Включено: ${users.filter(u => u.enabled).length}, active session: ${sessions.filter(s => s.connected).length}`;
+  if (byId('kpiUsersMeta')) byId('kpiUsersMeta').textContent = `Включено: ${users.filter(u => u.enabled).length}, active session: ${sessions.filter(s => s.connected).length}, policy deny: ${sessions.filter(s => s.policy_blocked).length}`;
 }
 function renderProfiles() {
   const tbody = byId('profileRows');
@@ -315,7 +333,7 @@ function renderUsers() {
   }
   tbody.innerHTML = rows.map((r) => (
     '<tr>' +
-      `<td><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${profileBadge(r)}${runtimeHintBadge(r)}</div></td>` +
+      `<td><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${profileBadge(r)}${policyBadge(r)}${runtimeHintBadge(r)}</div></td>` +
       `<td>${esc(r.username)}</td>` +
       `<td>${esc(r.profile || '—')}</td>` +
       `<td class="mono">${esc(r.ip)}</td>` +
@@ -357,7 +375,7 @@ function openInfo(username) {
   const profileText = row.profile || 'Без профиля';
   byId('infoUsername').textContent = row.username || '—';
   if (byId('infoUsername2')) byId('infoUsername2').textContent = row.username || '—';
-  byId('infoStatus').innerHTML = `<div class="statusIcons">${accountBadge(row)}${sessionBadge(row)}${profileBadge(row)}${runtimeHintBadge(row)}</div>`;
+  byId('infoStatus').innerHTML = `<div class="statusIcons">${accountBadge(row)}${sessionBadge(row)}${profileBadge(row)}${policyBadge(row)}${runtimeHintBadge(row)}</div>`;
   if (byId('infoProfilePill')) byId('infoProfilePill').textContent = `Профиль: ${profileText}`;
   if (byId('infoSourcePill')) byId('infoSourcePill').textContent = `Источник: ${row.source || '—'}`;
   if (byId('infoProfileText')) byId('infoProfileText').textContent = profileText;
@@ -391,14 +409,16 @@ function buildSessionGroups(username) {
         current = { id: item.connected_at || item.at, status: 'connected', ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: item.connected_at || item.at, lastSeen: item.last_seen || item.at, endedAt: '', steps: [ { kind: 'open', title: 'Открытие session', at: item.connected_at || item.at, meta: 'Agent session зафиксирована' }, { kind: 'handshake', title: 'Session подтверждена', at: item.at, meta: 'Клиент перешёл в состояние «подключён» по данным session API' } ] };
       } else { current.lastSeen = item.last_seen || current.lastSeen; }
     } else {
+      const closeTitle = key === 'disconnected_by_admin' ? 'Завершение сервером' : key === 'blocked_by_policy' ? 'Подключение заблокировано политикой' : 'Завершение session';
+      const closeMeta = key === 'disconnected_by_admin' ? 'Session разорвана сервером' : key === 'blocked_by_policy' ? ((item.policy_message || 'Подключение остановлено политикой') + (item.policy_name ? ' · ' + item.policy_name : '') + (item.policy_matched_apps && item.policy_matched_apps.length ? ' · ' + item.policy_matched_apps.join(', ') : '')) : 'Session перешла в отключённое состояние';
       if (current) {
         current.lastSeen = item.last_seen || current.lastSeen;
         current.endedAt = item.at;
         current.status = key;
-        current.steps.push({ kind: 'close', title: key === 'disconnected_by_admin' ? 'Завершение сервером' : 'Завершение session', at: item.at, meta: key === 'disconnected_by_admin' ? 'Session разорвана сервером' : 'Session перешла в отключённое состояние' });
+        current.steps.push({ kind: 'close', title: closeTitle, at: item.at, meta: closeMeta });
         groups.push(current); current = null;
       } else {
-        groups.push({ id: item.at, status: key, ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: '', lastSeen: item.last_seen || item.at, endedAt: item.at, steps: [{ kind: 'close', title: key === 'disconnected_by_admin' ? 'Завершение сервером' : 'Отключение', at: item.at, meta: 'Отключённое состояние без сохранённого старта' }] });
+        groups.push({ id: item.at, status: key, ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: '', lastSeen: item.last_seen || item.at, endedAt: item.at, steps: [{ kind: 'close', title: key === 'blocked_by_policy' ? 'Попытка подключения заблокирована' : (key === 'disconnected_by_admin' ? 'Завершение сервером' : 'Отключение'), at: item.at, meta: closeMeta }] });
       }
     }
   }
@@ -422,7 +442,7 @@ function renderRoadmap(username) {
     container.innerHTML = '<div class="roadmapEmpty">Нет данных о session</div>';
     return;
   }
-  const statusBadge = (status) => status === 'connected' ? pill('ok', 'Подключен') : status === 'disconnected_by_admin' ? pill('warn', 'Отключен сервером') : pill('bad', 'Отключен');
+  const statusBadge = (status) => status === 'connected' ? pill('ok', 'Подключен') : status === 'disconnected_by_admin' ? pill('warn', 'Отключен сервером') : status === 'blocked_by_policy' ? pill('bad', 'Заблокирован политикой') : pill('bad', 'Отключен');
   container.innerHTML = groups.map((group, idx) => (
     '<details class="roadmapCard" ' + (idx === 0 ? 'open' : '') + '>' +
       '<summary>' +
@@ -539,6 +559,19 @@ function renderAppsView() {
   const searchValue = (byId('appsSearch').value || '').trim().toLowerCase();
   const categoryValue = categoryEl.value || ''; const report = appsState.report; const pending = !!appsState.pending;
   let apps = report && Array.isArray(report.apps) ? report.apps.slice() : [];
+  if (appsState.last_policy_violation && Array.isArray(appsState.last_policy_violation.matched_apps)) {
+    const existing = new Set(apps.map((x) => String((x && (x.name || x.exe)) || '').trim().toLowerCase()).filter(Boolean));
+    for (const matched of appsState.last_policy_violation.matched_apps) {
+      const name = String(matched || '').trim();
+      const key = name.toLowerCase();
+      if (!key || existing.has(key)) continue;
+      existing.add(key);
+      apps.push({ name, category: 'Заблокировано политикой', pid: '', uptime: '—', exe: '' });
+    }
+  }
+  if (!apps.length && appsState.last_policy_violation && Array.isArray(appsState.last_policy_violation.matched_apps)) {
+    apps = appsState.last_policy_violation.matched_apps.map((name) => ({ name, category: 'Заблокировано политикой', pid: '', uptime: '—', exe: '' }));
+  }
   const categories = Array.from(new Set(apps.map(x => x.category || 'Другое'))).sort((a, b) => a.localeCompare(b, 'ru'));
   const currentCategory = categoryEl.value;
   categoryEl.innerHTML = '<option value="">Все категории</option>' + categories.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
@@ -555,7 +588,10 @@ function renderAppsView() {
   let statusText = 'Нет данных';
   if (pending && report) statusText = 'Ожидается свежий ответ клиента. Последний отчёт: ' + fmtDate(report.generated_at);
   else if (pending) statusText = 'Запрос отправлен. Ожидается ответ клиента…';
-  else if (report) statusText = 'Последний отчёт: ' + fmtDate(report.generated_at) + ', приложений: ' + ((report.apps || []).length) + ', запрещённых: ' + forbiddenCount + ((appPolicies || []).length ? '' : ' · политики не загружены');
+  else if (report || apps.length) statusText = 'Последний отчёт: ' + fmtDate(report && report.generated_at) + ', приложений: ' + apps.length + ', запрещённых: ' + forbiddenCount + (((appPolicies || []).length || appsState.last_policy_violation) ? '' : ' · политики не загружены');
+  if (appsState.last_policy_violation && (appsState.last_policy_violation.policy_name || appsState.last_policy_violation.message)) {
+    statusText += ' · последняя блокировка: ' + (appsState.last_policy_violation.policy_name || 'политика') + (appsState.last_policy_violation.message ? ' — ' + appsState.last_policy_violation.message : '');
+  }
   statusInput.value = statusText;
   if (!decorated.length) { rowsEl.innerHTML = '<tr><td colspan="6" class="muted">Нет данных</td></tr>'; return; }
   rowsEl.innerHTML = decorated.map(({ app, policyMatches }) => {
@@ -565,7 +601,7 @@ function renderAppsView() {
       : '<span class="muted">—</span>';
     const rowClass = forbidden ? ' class="appDeniedRow"' : '';
     const nameCell = forbidden
-      ? '<div><b>' + esc(app.name || '—') + '</b><div class="muted small">Совпадение с политикой доступа</div></div>'
+      ? '<div><b>' + esc(app.name || '—') + '</b> <span class="pill pillBad">Запрещено</span><div class="muted small">Совпадение с политикой доступа</div></div>'
       : esc(app.name || '—');
     return '<tr' + rowClass + '>' +
       `<td>${nameCell}</td><td>${esc(app.category || 'Другое')}</td><td class="mono">${esc(String(app.pid ?? '—'))}</td><td>${esc(app.uptime || '—')}</td><td class="mono">${esc(app.exe || '—')}</td><td>${policyText}</td>` +
@@ -575,7 +611,7 @@ function renderAppsView() {
 async function loadAppsView(username) {
   await loadPolicies().catch(() => {});
   const view = await jget('/api/admin/users/apps?username=' + encodeURIComponent(username));
-  appsState = { username, pending: !!view.pending, report: view.report || null };
+  appsState = { username, pending: !!view.pending, report: view.report || null, last_policy_violation: view.last_policy_violation || null };
   renderAppsView();
   if (!appsState.pending && appsPollTimer) { clearInterval(appsPollTimer); appsPollTimer = null; }
 }
@@ -590,7 +626,7 @@ async function requestAppsRefresh() {
 }
 async function openApps(username) {
   await loadPolicies().catch(() => {});
-  appsState = { username, pending: false, report: null };
+  appsState = { username, pending: false, report: null, last_policy_violation: null };
   byId('appsUsername').textContent = username || '—';
   byId('appsSearch').value = '';
   byId('appsCategory').innerHTML = '<option value="">Все категории</option>';
@@ -685,9 +721,51 @@ function patternsPreview(patterns) {
   if (arr.length <= 2) return arr.join(', ');
   return arr.slice(0,2).join(', ') + ' +' + (arr.length - 2);
 }
+function policyChecksLabel(policy) {
+  const parts = [];
+  if (policy && policy.check_on_client) parts.push('Клиент');
+  if (policy && policy.check_on_server) parts.push('Сервер');
+  return parts.length ? parts.join(' + ') : 'Клиент';
+}
 function getUserRow(username) {
   return (users || []).find((u) => (u?.username || '') === (username || '')) || null;
 }
+function normalizeSimple(v) {
+  return String(v || '').toLowerCase().trim().replace(/[\s_\-]+/g, ' ');
+}
+function getViolationForcedMatchesForApp(app) {
+  const v = appsState && appsState.last_policy_violation ? appsState.last_policy_violation : null;
+  if (!v || !Array.isArray(v.matched_apps) || !v.matched_apps.length) return [];
+  const parts = [app?.name, app?.category, app?.exe, app?.pid, app?.uptime].map((x) => String(x || '').trim()).filter(Boolean);
+  const hayRaw = parts.join("\n");
+  const hay = hayRaw.toLowerCase();
+  const hayNorm = normalizeSimple(hayRaw);
+  const hits = [];
+  for (const raw of v.matched_apps) {
+    const name = String(raw || '').trim();
+    if (!name) continue;
+    const needle = name.toLowerCase();
+    const needleNorm = normalizeSimple(name);
+    if (
+      hay.includes(needle) ||
+      (needleNorm && hayNorm.includes(needleNorm)) ||
+      (needleNorm && hayNorm === needleNorm) ||
+      (needleNorm && normalizeSimple(app?.name) === needleNorm) ||
+      (needleNorm && normalizeSimple(app?.exe) === needleNorm)
+    ) {
+      hits.push(name);
+    }
+  }
+  const syntheticBlocked = String(app?.category || '').trim().toLowerCase() === 'заблокировано политикой';
+  if (!hits.length && !syntheticBlocked) return [];
+  return [{
+    id: v.policy_id || '',
+    name: v.policy_name || 'Политика',
+    mode: 'deny_on_match',
+    matchedPatterns: hits.length ? hits : (Array.isArray(v.matched_apps) ? v.matched_apps.slice() : [])
+  }];
+}
+
 function policyScopeApplies(policy, username, profileName) {
   const scope = policy && policy.scope ? policy.scope : {};
   if (!policy || policy.enabled === false) return false;
@@ -699,7 +777,7 @@ function policyScopeApplies(policy, username, profileName) {
   return false;
 }
 function wildcardToRegexText(value) {
-  return escapeRegex(value).replace(/\\*/g, '.*');
+  return escapeRegex(value).replace(/\*/g, '.*');
 }
 function compilePolicyPattern(pattern) {
   if (!pattern) return null;
@@ -715,6 +793,8 @@ function compilePolicyPattern(pattern) {
   }
 }
 function getPolicyMatchesForApp(app, username) {
+  const forced = getViolationForcedMatchesForApp(app);
+  if (forced.length) return forced;
   const userRow = getUserRow(username);
   const profileName = userRow && userRow.profile ? userRow.profile : '';
   const hay = [app?.name, app?.category, app?.exe, app?.pid, app?.uptime].map((v) => String(v || '')).join('\n');
@@ -742,7 +822,7 @@ function getPolicyMatchesForApp(app, username) {
 function renderPolicies() {
   const el = byId('policyRows');
   if (!el) return;
-  if (!appPolicies.length) { el.innerHTML = '<tr><td colspan="7" class="muted">Нет данных</td></tr>'; return; }
+  if (!appPolicies.length) { el.innerHTML = '<tr><td colspan="8" class="muted">Нет данных</td></tr>'; return; }
   el.innerHTML = appPolicies.map((p) => {
     const status = p.enabled ? pill('ok', 'Включена') : pill('mute', 'Выключена');
     const scope = scopeLabel(p.scope);
@@ -750,6 +830,7 @@ function renderPolicies() {
     return '<tr>' +
       `<td><div style="font-weight:800">${esc(p.name || p.id || '—')}</div><div class="muted small mono">${esc(p.id || '—')}</div></td>` +
       `<td><span class="mono">${esc(p.mode || 'deny_on_match')}</span></td>` +
+      `<td>${esc(policyChecksLabel(p))}</td>` +
       `<td>${esc(scope)}</td>` +
       `<td class="mono">${esc(patternsPreview(p.patterns))}</td>` +
       `<td>${esc(msg)}</td>` +
@@ -773,6 +854,8 @@ function fillPolicyForm(policy) {
   byId('policyProfiles').value = Array.isArray(scope.profiles) ? scope.profiles.join(', ') : '';
   byId('policyUsers').value = Array.isArray(scope.users) ? scope.users.join(', ') : '';
   byId('policyMessage').value = p.message || 'У вас обнаружено запрещенное приложение';
+  if (byId('policyCheckOnClient')) byId('policyCheckOnClient').checked = p.check_on_client !== false || !p.check_on_server;
+  if (byId('policyCheckOnServer')) byId('policyCheckOnServer').checked = !!p.check_on_server;
   const normalizedPatterns = normalizePolicyPatterns(p.patterns);
   const selectedKeys = new Set(normalizedPatterns.map(patternKey));
   renderPolicyPresetList(selectedKeys);
@@ -793,6 +876,8 @@ function policyPayloadFromForm() {
     enabled: byId('policyEnabled').value === 'true',
     mode: byId('policyMode').value || 'deny_on_match',
     message: byId('policyMessage').value.trim() || 'У вас обнаружено запрещенное приложение',
+    check_on_client: !!byId('policyCheckOnClient')?.checked,
+    check_on_server: !!byId('policyCheckOnServer')?.checked,
     patterns: (() => {
       const presetPatterns = selectedPresetPatterns();
       const customPatterns = byId('policyPatterns').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).map((x) => {
@@ -917,6 +1002,7 @@ if (byId('btnSavePolicy')) {
     if (!payload.id) { alert('Укажите ID политики'); return; }
     if (!payload.name) { alert('Укажите название политики'); return; }
     if (!payload.patterns.length) { alert('Добавьте хотя бы один шаблон'); return; }
+    if (!payload.check_on_client && !payload.check_on_server) { alert('Выберите хотя бы один режим проверки'); return; }
     await jpost('/api/admin/app-policies', payload);
     await loadPolicies();
     renderPolicies();

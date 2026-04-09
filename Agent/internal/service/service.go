@@ -706,6 +706,55 @@ func (s *Service) Sessions(ctx context.Context) ([]model.Session, error) {
 		log.Printf("service Sessions failed ms=%d error=%v", sinceMs(start), err)
 		return nil, err
 	}
+	latestViolations, err := s.latestPolicyViolationsByUser()
+	if err != nil {
+		log.Printf("service Sessions violations warning ms=%d error=%v", sinceMs(start), err)
+	} else if len(latestViolations) > 0 {
+		idx := map[string]int{}
+		for i, sess := range sessions {
+			idx[strings.TrimSpace(sess.Username)] = i
+		}
+		for username, v := range latestViolations {
+			if i, ok := idx[username]; ok {
+				sessions[i].PolicyBlocked = true
+				sessions[i].PolicyBlockedAt = v.OccurredAt
+				sessions[i].PolicyName = v.PolicyName
+				sessions[i].PolicyMessage = v.Message
+				sessions[i].PolicyMatchedApps = append([]string(nil), v.MatchedApps...)
+				if sessions[i].LastSeen.IsZero() || (!v.OccurredAt.IsZero() && v.OccurredAt.After(sessions[i].LastSeen)) {
+					sessions[i].LastSeen = v.OccurredAt
+				}
+				// Keep an actually active session visible even if there was a later policy deny attempt.
+				// The deny is still exposed through PolicyBlocked* fields and rendered in the UI as an event/badge.
+				if !sessions[i].Connected && !v.OccurredAt.IsZero() && (sessions[i].ConnectedAt.IsZero() || v.OccurredAt.After(sessions[i].ConnectedAt) || v.OccurredAt.After(sessions[i].LastSeen)) {
+					sessions[i].Connected = false
+					sessions[i].IP = ""
+					sessions[i].MAC = ""
+					sessions[i].SystemUser = ""
+					sessions[i].OSName = ""
+					sessions[i].OSVersion = ""
+					sessions[i].SystemUptime = ""
+					sessions[i].Interfaces = nil
+					sessions[i].Source = "policy_deny"
+					sessions[i].AppsCount = len(v.MatchedApps)
+					sessions[i].AppsUpdatedAt = v.OccurredAt
+				}
+				continue
+			}
+			sessions = append(sessions, model.Session{
+				Username:          username,
+				Connected:         false,
+				LastSeen:          v.OccurredAt,
+				AppsCount:         len(v.MatchedApps),
+				Source:            "policy_deny",
+				PolicyBlocked:     true,
+				PolicyBlockedAt:   v.OccurredAt,
+				PolicyName:        v.PolicyName,
+				PolicyMessage:     v.Message,
+				PolicyMatchedApps: append([]string(nil), v.MatchedApps...),
+			})
+		}
+	}
 	log.Printf("service Sessions ok ms=%d count=%d", sinceMs(start), len(sessions))
 	return sessions, nil
 }
@@ -751,8 +800,23 @@ func (s *Service) AppsView(ctx context.Context, username string) (model.AppsView
 		view.Command = &cmd
 	}
 	report, err := s.backend.GetApps(ctx, username)
+	latestViolations, verr := s.latestPolicyViolationsByUser()
+	if verr == nil {
+		if v, ok := latestViolations[strings.TrimSpace(username)]; ok {
+			copyV := v
+			view.LastPolicyViolation = &copyV
+			if err != nil {
+				report = model.AppsSnapshot{Username: username}
+				err = nil
+			}
+			report = mergeViolationApps(report, &copyV)
+		}
+	}
 	if err != nil {
 		return view, err
+	}
+	if strings.TrimSpace(report.Username) == "" {
+		report.Username = username
 	}
 	if strings.TrimSpace(report.Username) != "" || len(report.Apps) > 0 || !report.GeneratedAt.IsZero() {
 		view.Report = &report
@@ -1031,6 +1095,9 @@ func (s *Service) normalizeAppPolicy(in model.AppPolicy) model.AppPolicy {
 		patterns = append(patterns, pat)
 	}
 	in.Patterns = patterns
+	if !in.CheckOnClient && !in.CheckOnServer {
+		in.CheckOnClient = true
+	}
 	in.Scope.Profiles = dedupeStringsFold(in.Scope.Profiles)
 	in.Scope.Users = dedupeStringsFold(in.Scope.Users)
 	in.UpdatedAt = time.Now().UTC()
@@ -1129,6 +1196,93 @@ func (s *Service) ResolveAppPolicy(ctx context.Context, username, profile string
 	return resolved, nil
 }
 
+func (s *Service) loadAppPolicyViolations() ([]model.AppPolicyViolation, error) {
+	path := s.appPolicyViolationsPath()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var items []model.AppPolicyViolation
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func trimStringList(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, item := range in {
+		v := strings.TrimSpace(item)
+		if v == "" {
+			continue
+		}
+		key := strings.ToLower(v)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (s *Service) latestPolicyViolationsByUser() (map[string]model.AppPolicyViolation, error) {
+	items, err := s.loadAppPolicyViolations()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]model.AppPolicyViolation{}
+	for _, item := range items {
+		username := strings.TrimSpace(item.Username)
+		if username == "" {
+			continue
+		}
+		cur, ok := out[username]
+		if !ok || item.OccurredAt.After(cur.OccurredAt) {
+			out[username] = item
+		}
+	}
+	return out, nil
+}
+
+func mergeViolationApps(report model.AppsSnapshot, v *model.AppPolicyViolation) model.AppsSnapshot {
+	if v == nil || len(v.MatchedApps) == 0 {
+		return report
+	}
+	seen := map[string]struct{}{}
+	for _, app := range report.Apps {
+		for _, key := range []string{app.Name, app.Exe} {
+			key = strings.ToLower(strings.TrimSpace(key))
+			if key != "" {
+				seen[key] = struct{}{}
+			}
+		}
+	}
+	for _, app := range v.MatchedApps {
+		name := strings.TrimSpace(app)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		report.Apps = append(report.Apps, model.AppInfo{Name: name, Category: "Заблокировано политикой"})
+	}
+	if report.GeneratedAt.IsZero() || (!v.OccurredAt.IsZero() && v.OccurredAt.After(report.GeneratedAt)) {
+		report.GeneratedAt = v.OccurredAt
+	}
+	return report
+}
+
 func (s *Service) RecordAppPolicyViolation(ctx context.Context, v model.AppPolicyViolation) error {
 	path := s.appPolicyViolationsPath()
 	if err := ensureDir(path); err != nil {
@@ -1137,8 +1291,11 @@ func (s *Service) RecordAppPolicyViolation(ctx context.Context, v model.AppPolic
 	v.Username = strings.TrimSpace(v.Username)
 	v.Profile = strings.TrimSpace(v.Profile)
 	v.PolicyID = strings.TrimSpace(v.PolicyID)
+	v.PolicyName = strings.TrimSpace(v.PolicyName)
+	v.Message = strings.TrimSpace(v.Message)
 	v.Action = strings.TrimSpace(v.Action)
 	v.Source = strings.TrimSpace(v.Source)
+	v.MatchedApps = trimStringList(v.MatchedApps)
 	if v.OccurredAt.IsZero() {
 		v.OccurredAt = time.Now().UTC()
 	}

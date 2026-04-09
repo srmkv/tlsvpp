@@ -30,8 +30,7 @@ tlsctrl_vpn_frame_tx_keepalive (u64 tunnel_id, u8 **out_frame)
     seq = s->seq_tx + 1;
   if (out_frame)
     _tlsctrl_vpn_frame_put_hdr (out_frame, TLSCTRL_VPN_FRAME_TYPE_KEEPALIVE, 0, 0, tunnel_id, seq);
-  tlsctrl_vpn_stream_note_keepalive (tunnel_id, 1);
-  return tlsctrl_vpn_dp_touch_keepalive (tunnel_id, 1);
+  return tlsctrl_vpn_stream_note_keepalive (tunnel_id, 1);
 }
 
 int
@@ -52,9 +51,7 @@ tlsctrl_vpn_frame_tx_ipv4 (u64 tunnel_id, const u8 *payload, u32 payload_len,
       if (payload && payload_len)
         vec_add (*out_frame, (u8 *)payload, payload_len);
     }
-  tlsctrl_vpn_stream_note_ipv4 (tunnel_id, payload_len, 1);
-  tlsctrl_vpn_transport_note_packet (tunnel_id, payload_len, 1);
-  return tlsctrl_vpn_dp_note_ipv4 (tunnel_id, payload_len, 1);
+  return tlsctrl_vpn_stream_note_ipv4 (tunnel_id, payload_len, 1);
 }
 
 int
@@ -88,12 +85,25 @@ tlsctrl_vpn_frame_rx (u64 tunnel_id, const u8 *frame, u32 frame_len,
   switch (h->type)
     {
     case TLSCTRL_VPN_FRAME_TYPE_KEEPALIVE:
-      tlsctrl_vpn_stream_note_keepalive (tunnel_id, 0);
-      return tlsctrl_vpn_dp_touch_keepalive (tunnel_id, 0);
+      return tlsctrl_vpn_stream_note_keepalive (tunnel_id, 0);
     case TLSCTRL_VPN_FRAME_TYPE_IPV4:
-      tlsctrl_vpn_stream_note_ipv4 (tunnel_id, payload_len, 0);
-      tlsctrl_vpn_transport_note_packet (tunnel_id, payload_len, 0);
-      return tlsctrl_vpn_dp_note_ipv4 (tunnel_id, payload_len, 0);
+      if (payload_len && out_payload && *out_payload)
+        {
+          int rv = tlsctrl_vpn_dp_rx_ipv4_to_vpp (tunnel_id, *out_payload, payload_len);
+          if (rv)
+            return rv;
+          {
+            tlsctrl_vpn_dp_session_t *s = 0;
+            if (!tlsctrl_vpn_dp_find_session (tunnel_id, &s) && s && s->stage13_auto_hook_enabled)
+              {
+                u8 *auto_frame = 0;
+                tlsctrl_vpn_dp_stage13_note_auto (tunnel_id, payload_len);
+                if (!tlsctrl_vpn_dp_tx_ipv4_from_vpp (tunnel_id, *out_payload, payload_len, &auto_frame) && auto_frame)
+                  (void) tlsctrl_vpn_dp_enqueue_frame (tunnel_id, auto_frame);
+              }
+          }
+        }
+      return tlsctrl_vpn_stream_note_ipv4 (tunnel_id, payload_len, 0);
     default:
       return 0;
     }

@@ -10,6 +10,7 @@ add_vpp_plugin(tlsctrl
   tlsctrl_vpn_api.c
   tlsctrl_vpn_cli.c
   tlsctrl_vpn_dp.c
+  tlsctrl_vpn_stage16.c
   tlsctrl_vpn_dp_cli.c
   tlsctrl_vpn_frame.c
   tlsctrl_vpn_frame_cli.c
