@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -8,10 +9,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -87,6 +90,7 @@ const (
 	HeartbeatPath               = "/api/client/heartbeat"
 	VPNFramePath                = "/api/client/vpn-frame"
 	VPNPollPath                 = "/api/client/vpn-poll"
+	VPNStreamPath               = "/api/client/vpn-stream"
 	policyBootstrapDefaultPath  = "/api/client/policy-bootstrap"
 	policyBootstrapFallbackPath = ""
 	policyViolationDefaultPath  = "/api/client/policy-violation"
@@ -96,6 +100,7 @@ const (
 )
 
 var (
+	activeOpMu      sync.Mutex
 	activeMu        sync.RWMutex
 	activeClient    *http.Client
 	activeTransport *http.Transport
@@ -105,6 +110,10 @@ var (
 	activeCancel    context.CancelFunc
 	activeWG        sync.WaitGroup
 	activeBase      string
+	activeStopping  bool
+	activeDataConn  io.Closer
+	dataplaneLogMu  sync.RWMutex
+	dataplaneLogger func(string)
 )
 
 type vpnBindResponse struct {
@@ -647,7 +656,7 @@ func reportPolicyViolation(cfg state.Config, httpClient *http.Client, policy mod
 func currentSession() (model.ClientSession, bool) {
 	activeMu.RLock()
 	defer activeMu.RUnlock()
-	if !activeConnected {
+	if !activeConnected || activeStopping {
 		return model.ClientSession{}, false
 	}
 	s := activeSession
@@ -665,10 +674,35 @@ func setCurrentSession(s model.ClientSession, client *http.Client, tr *http.Tran
 	activeRuntime = applier
 	activeCancel = cancel
 	activeBase = strings.TrimSpace(baseURL)
+	activeStopping = false
 	activeConnected = true
 }
 
+func setActiveDataConn(c io.Closer) {
+	activeMu.Lock()
+	activeDataConn = c
+	activeMu.Unlock()
+}
+
+func dataplaneActiveState() (string, *http.Client, bool) {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	return strings.TrimSpace(activeBase), activeClient, activeStopping
+}
+
+func dataplaneShouldStop() bool {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	return activeStopping
+}
+
 func ConnectVPN(cfg state.Config) (model.ClientSession, error) {
+	activeOpMu.Lock()
+	defer activeOpMu.Unlock()
+	return connectVPNLocked(cfg)
+}
+
+func connectVPNLocked(cfg state.Config) (model.ClientSession, error) {
 	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 15*time.Second)
 	if err != nil {
 		return model.ClientSession{}, err
@@ -861,36 +895,85 @@ func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 }
 
 func Disconnect(cfg state.Config) error {
-	activeMu.RLock()
+	activeOpMu.Lock()
+	defer activeOpMu.Unlock()
+	return disconnectLocked(cfg, true)
+}
+
+func ReconnectVPN(cfg state.Config, attempts int, baseDelay time.Duration) (model.ClientSession, error) {
+	activeOpMu.Lock()
+	defer activeOpMu.Unlock()
+
+	if attempts <= 0 {
+		attempts = 1
+	}
+	if baseDelay <= 0 {
+		baseDelay = time.Second
+	}
+	_ = disconnectLocked(cfg, false)
+
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			delay := baseDelay * time.Duration(1<<(i-1))
+			time.Sleep(delay)
+		}
+		session, err := connectVPNLocked(cfg)
+		if err == nil {
+			return session, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("reconnect failed")
+	}
+	return model.ClientSession{}, lastErr
+}
+
+func disconnectLocked(cfg state.Config, notify bool) error {
+	activeMu.Lock()
 	session := activeSession
 	httpClient := activeClient
-	activeMu.RUnlock()
-	if httpClient != nil && strings.TrimSpace(session.Username) != "" {
-		_ = sendDisconnectNotice(cfg, session)
-	}
-
-	activeMu.Lock()
 	cancel := activeCancel
 	tr := activeTransport
 	applier := activeRuntime
 	activeConnected = false
-	activeTransport = nil
+	activeStopping = true
+	activeBase = ""
 	activeClient = nil
+	activeTransport = nil
 	activeRuntime = nil
 	activeCancel = nil
-	activeSession = model.ClientSession{}
-	activeBase = ""
+	dataConn := activeDataConn
+	activeDataConn = nil
 	activeMu.Unlock()
+
+	if dataConn != nil {
+		_ = dataConn.Close()
+	}
+
+	if notify && httpClient != nil && strings.TrimSpace(session.Username) != "" {
+		_ = sendDisconnectNoticeWithClient(cfg, session, httpClient)
+	}
+
 	if cancel != nil {
 		cancel()
 	}
-	activeWG.Wait()
 	if applier != nil {
 		_ = applier.Revert(context.Background())
 	}
+	activeWG.Wait()
 	if tr != nil {
 		tr.CloseIdleConnections()
 	}
+
+	activeMu.Lock()
+	activeSession = model.ClientSession{}
+	activeStopping = false
+	activeBase = ""
+	activeMu.Unlock()
+
+	ClearDataplaneSnapshot()
 	return nil
 }
 
@@ -898,6 +981,10 @@ func sendDisconnectNotice(cfg state.Config, s model.ClientSession) error {
 	activeMu.RLock()
 	httpClient := activeClient
 	activeMu.RUnlock()
+	return sendDisconnectNoticeWithClient(cfg, s, httpClient)
+}
+
+func sendDisconnectNoticeWithClient(cfg state.Config, s model.ClientSession, httpClient *http.Client) error {
 	if httpClient == nil {
 		return nil
 	}
@@ -991,12 +1078,226 @@ func sendHeartbeat(cfg state.Config, s model.ClientSession) error {
 	return nil
 }
 
-func startDataplane(ctx context.Context, cfg state.Config, s model.ClientSession, applier *runtimeApplier, httpClient *http.Client) {
-	if applier == nil || applier.TunFile() == nil || s.TunnelID == 0 {
+func buildMTLSTLSConfig(cfg state.Config) (*tls.Config, error) {
+	if !fileExists(cfg.CACertFile) {
+		return nil, fmt.Errorf("не найден CA сертификат")
+	}
+	if !fileExists(cfg.ClientCertFile) {
+		return nil, fmt.Errorf("не найден client certificate")
+	}
+	if !fileExists(cfg.ClientKeyFile) {
+		return nil, fmt.Errorf("не найден client key")
+	}
+	caData, err := os.ReadFile(cfg.CACertFile)
+	if err != nil {
+		return nil, fmt.Errorf("read ca cert: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(caData) {
+		return nil, fmt.Errorf("invalid CA PEM")
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load client certificate: %w", err)
+	}
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{cert}}
+	if cfg.ServerName != "" {
+		tlsCfg.ServerName = cfg.ServerName
+	}
+	return tlsCfg, nil
+}
+
+func openVPNStream(cfg state.Config, s model.ClientSession) (net.Conn, *bufio.Reader, error) {
+	base := strings.TrimSpace(cfg.ServerURL)
+	u, err := url.Parse(base)
+	if err != nil {
+		return nil, nil, err
+	}
+	host := u.Host
+	if host == "" {
+		return nil, nil, fmt.Errorf("empty host")
+	}
+	addr := host
+	if !strings.Contains(addr, ":") {
+		if u.Scheme == "https" || u.Scheme == "" {
+			addr += ":443"
+		} else {
+			addr += ":80"
+		}
+	}
+	tlsCfg, err := buildMTLSTLSConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	path := VPNStreamPath + "?username=" + url.QueryEscape(strings.TrimSpace(s.Username)) + "&tunnel_id=" + url.QueryEscape(fmt.Sprintf("%d", s.TunnelID))
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", path, u.Host)
+	if _, err := io.WriteString(conn, req); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	parts := strings.Split(strings.TrimSpace(line), " ")
+	if len(parts) < 2 || parts[1] != "200" {
+		body, _ := br.ReadString('\n')
+		conn.Close()
+		return nil, nil, fmt.Errorf("vpn-stream status: %s %s", strings.TrimSpace(line), strings.TrimSpace(body))
+	}
+	for {
+		line, err = br.ReadString('\n')
+		if err != nil {
+			conn.Close()
+			return nil, nil, err
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	return conn, br, nil
+}
+
+func dataplaneStreamWriteLoop(ctx context.Context, conn net.Conn, s model.ClientSession, applier *runtimeApplier, seq *atomic.Uint64) {
+	defer activeWG.Done()
+	f := applier.TunReadFile()
+	if f == nil {
 		return
 	}
+	bw := bufio.NewWriterSize(conn, 256*1024)
+	buf := make([]byte, 65535)
+	for {
+		_ = f.SetReadDeadline(time.Now().Add(1 * time.Second))
+		n, err := f.Read(buf)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if isDataplaneShutdownError(ctx, err) {
+				return
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			dataplaneMarkError(err)
+			return
+		}
+		if n <= 0 {
+			continue
+		}
+		dataplaneCtrs.TunReads.Add(1)
+		dataplaneCtrs.TunReadBytes.Add(uint64(n))
+		dataplaneMarkFrame()
+		frame := buildVPNFrame(frameTypeIPv4, s.TunnelID, seq.Add(1), buf[:n])
+		var hdr [4]byte
+		binary.LittleEndian.PutUint32(hdr[:], uint32(len(frame)))
+		if _, err := bw.Write(hdr[:]); err != nil {
+			dataplaneMarkError(err)
+			return
+		}
+		if _, err := bw.Write(frame); err != nil {
+			dataplaneMarkError(err)
+			return
+		}
+		if err := bw.Flush(); err != nil {
+			dataplaneMarkError(err)
+			return
+		}
+		dataplaneCtrs.FramePosts.Add(1)
+	}
+}
+
+func dataplaneStreamReadLoop(ctx context.Context, br *bufio.Reader, conn net.Conn, s model.ClientSession, applier *runtimeApplier, seq *atomic.Uint64) {
+	defer activeWG.Done()
+	f := applier.TunWriteFile()
+	if f == nil {
+		return
+	}
+	var hdr [4]byte
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		if _, err := io.ReadFull(br, hdr[:]); err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if isDataplaneShutdownError(ctx, err) {
+				return
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			dataplaneMarkError(err)
+			return
+		}
+		frameLen := binary.LittleEndian.Uint32(hdr[:])
+		if frameLen == 0 {
+			continue
+		}
+		if frameLen > 8*1024*1024 {
+			dataplaneMarkError(fmt.Errorf("stream frame too large: %d", frameLen))
+			return
+		}
+		frame := make([]byte, frameLen)
+		if _, err := io.ReadFull(br, frame); err != nil {
+			dataplaneMarkError(err)
+			return
+		}
+		dataplaneCtrs.PollFrames.Add(1)
+		dataplaneMarkFrame()
+		typeID, _, payload, err := parseVPNFrame(frame)
+		if err != nil {
+			if len(frame) > 0 && (frame[0]>>4) == 4 {
+				if n, werr := f.Write(frame); werr == nil {
+					dataplaneCtrs.TunWrites.Add(1)
+					dataplaneCtrs.TunWriteBytes.Add(uint64(n))
+				}
+				continue
+			}
+			dataplaneMarkError(err)
+			return
+		}
+		if typeID == frameTypeIPv4 && len(payload) > 0 {
+			if n, werr := f.Write(payload); werr == nil {
+				dataplaneCtrs.TunWrites.Add(1)
+				dataplaneCtrs.TunWriteBytes.Add(uint64(n))
+			}
+		}
+	}
+}
+
+func startDataplane(ctx context.Context, cfg state.Config, s model.ClientSession, applier *runtimeApplier, httpClient *http.Client) {
+	resetDataplaneSnapshot(ActiveTunName())
+	if applier == nil || applier.TunReadFile() == nil || applier.TunWriteFile() == nil || s.TunnelID == 0 {
+		dataplaneLogf("DATAPLANE not started: tun_read=%v tun_write=%v tunnel_id=%d", applier != nil && applier.TunReadFile() != nil, applier != nil && applier.TunWriteFile() != nil, s.TunnelID)
+		return
+	}
+	dataplaneLogf("DATAPLANE started: tunnel=%d vip=%s gw=%s server=%s", s.TunnelID, strings.TrimSpace(s.IP), strings.TrimSpace(s.Gateway), strings.TrimSpace(activeBaseURL()))
 	var seq atomic.Uint64
 	seq.Store(0)
+	if conn, br, err := openVPNStream(cfg, s); err == nil {
+		setActiveDataConn(conn)
+		dataplaneLogf("DATAPLANE full-duplex stream started: tunnel=%d", s.TunnelID)
+		activeWG.Add(2)
+		go dataplaneStreamWriteLoop(ctx, conn, s, applier, &seq)
+		go dataplaneStreamReadLoop(ctx, br, conn, s, applier, &seq)
+		return
+	} else {
+		dataplaneLogf("DATAPLANE full-duplex stream unavailable, fallback to frame/poll: tunnel=%d err=%v", s.TunnelID, err)
+	}
 	activeWG.Add(2)
 	go func() {
 		defer activeWG.Done()
@@ -1008,12 +1309,35 @@ func startDataplane(ctx context.Context, cfg state.Config, s model.ClientSession
 	}()
 }
 
+func isDataplaneShutdownError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	if dataplaneShouldStop() {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(msg, "unsupported protocol scheme") {
+		return true
+	}
+	if strings.Contains(msg, "file already closed") || strings.Contains(msg, "use of closed file") {
+		return true
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "context canceled")
+}
+
 func dataplaneReadLoop(ctx context.Context, httpClient *http.Client, s model.ClientSession, applier *runtimeApplier, seq *atomic.Uint64) {
-	f := applier.TunFile()
+	f := applier.TunReadFile()
 	if f == nil {
+		dataplaneLogf("DATAPLANE read loop skipped: tun file missing")
 		return
 	}
+	dataplaneLogf("DATAPLANE read loop started: tunnel=%d fd=%d", s.TunnelID, f.Fd())
 	buf := make([]byte, 65535)
+	var reads uint64
 	for {
 		_ = f.SetReadDeadline(time.Now().Add(1 * time.Second))
 		n, err := f.Read(buf)
@@ -1023,63 +1347,158 @@ func dataplaneReadLoop(ctx context.Context, httpClient *http.Client, s model.Cli
 				return
 			default:
 			}
+			if isDataplaneShutdownError(ctx, err) {
+				return
+			}
 			continue
 		}
 		if n <= 0 {
 			continue
 		}
+		reads++
+		dataplaneCtrs.TunReads.Add(1)
+		dataplaneCtrs.TunReadBytes.Add(uint64(n))
+		dataplaneMarkFrame()
+		if reads <= 5 || reads%50 == 0 {
+			dataplaneLogf("DATAPLANE read from TUN: tunnel=%d bytes=%d", s.TunnelID, n)
+		}
 		frame := buildVPNFrame(frameTypeIPv4, s.TunnelID, seq.Add(1), buf[:n])
-		_ = postFrame(ctx, httpClient, s, frame)
+		if err := postFrame(ctx, httpClient, s, frame); err != nil {
+			if isDataplaneShutdownError(ctx, err) {
+				return
+			}
+			dataplaneCtrs.FramePostErrors.Add(1)
+			dataplaneMarkError(err)
+			dataplaneLogf("DATAPLANE post frame failed: tunnel=%d bytes=%d err=%v", s.TunnelID, n, err)
+			continue
+		}
+		if reads <= 5 || reads%50 == 0 {
+			dataplaneLogf("DATAPLANE frame sent: tunnel=%d bytes=%d", s.TunnelID, n)
+		}
 	}
 }
 
 func dataplanePollLoop(ctx context.Context, httpClient *http.Client, s model.ClientSession, applier *runtimeApplier, seq *atomic.Uint64) {
-	f := applier.TunFile()
+	f := applier.TunWriteFile()
 	if f == nil {
+		dataplaneLogf("DATAPLANE poll loop skipped: tun file missing")
 		return
 	}
+	dataplaneLogf("DATAPLANE poll loop started: tunnel=%d fd=%d", s.TunnelID, f.Fd())
 	keepTicker := time.NewTicker(5 * time.Second)
-	pollTicker := time.NewTicker(200 * time.Millisecond)
+	pollTicker := time.NewTicker(20 * time.Millisecond)
 	defer keepTicker.Stop()
 	defer pollTicker.Stop()
+	var received uint64
+	writePayload := func(raw []byte) {
+		if len(raw) == 0 {
+			return
+		}
+		received++
+		if n, werr := f.Write(raw); werr != nil {
+			dataplaneMarkError(werr)
+			dataplaneLogf("DATAPLANE write to TUN failed: tunnel=%d bytes=%d err=%v", s.TunnelID, len(raw), werr)
+		} else {
+			dataplaneCtrs.TunWrites.Add(1)
+			dataplaneCtrs.TunWriteBytes.Add(uint64(n))
+			dataplaneMarkFrame()
+			if received <= 5 || received%50 == 0 {
+				dataplaneLogf("DATAPLANE write to TUN: tunnel=%d bytes=%d wrote=%d", s.TunnelID, len(raw), n)
+			}
+			if received <= 5 || received%50 == 0 {
+				dataplaneLogf("DATAPLANE frame received: tunnel=%d bytes=%d", s.TunnelID, len(raw))
+			}
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-keepTicker.C:
-			frame := buildVPNFrame(frameTypeKeepalive, s.TunnelID, seq.Add(1), nil)
-			_ = postFrame(ctx, httpClient, s, frame)
+			seq.Add(1)
+			if err := postFrame(ctx, httpClient, s, nil); err != nil {
+				if isDataplaneShutdownError(ctx, err) {
+					return
+				}
+				dataplaneCtrs.KeepaliveErrors.Add(1)
+				dataplaneMarkError(err)
+				dataplaneLogf("DATAPLANE keepalive failed: tunnel=%d err=%v", s.TunnelID, err)
+			} else {
+				dataplaneCtrs.Keepalives.Add(1)
+			}
 		case <-pollTicker.C:
-			frameHex, err := pollFrame(ctx, httpClient, s)
-			if err != nil || strings.TrimSpace(frameHex) == "" {
-				continue
-			}
-			frame, err := hex.DecodeString(frameHex)
-			if err != nil {
-				continue
-			}
-			typeID, _, payload, err := parseVPNFrame(frame)
-			if err != nil {
-				continue
-			}
-			if typeID == frameTypeIPv4 && len(payload) > 0 {
-				_, _ = f.Write(payload)
+			for i := 0; i < 32; i++ {
+				dataplaneCtrs.PollRequests.Add(1)
+				frameHex, err := pollFrame(ctx, httpClient, s)
+				if err != nil {
+					if isDataplaneShutdownError(ctx, err) {
+						return
+					}
+					dataplaneCtrs.PollErrors.Add(1)
+					dataplaneMarkError(err)
+					if i == 0 {
+						dataplaneLogf("DATAPLANE poll failed: tunnel=%d err=%v", s.TunnelID, err)
+					}
+					break
+				}
+				if strings.TrimSpace(frameHex) == "" {
+					break
+				}
+				dataplaneCtrs.PollFrames.Add(1)
+				dataplaneMarkFrame()
+				frame, err := hex.DecodeString(frameHex)
+				if err != nil {
+					dataplaneLogf("DATAPLANE decode poll frame failed: %v", err)
+					break
+				}
+				typeID, _, payload, err := parseVPNFrame(frame)
+				if err != nil {
+					// Fallback: some plugin builds may return raw IPv4 payload instead of full VPN frame.
+					if len(frame) > 0 && (frame[0]>>4) == 4 {
+						writePayload(frame)
+						continue
+					}
+					dataplaneLogf("DATAPLANE parse poll frame failed: %v", err)
+					break
+				}
+				if typeID == frameTypeIPv4 && len(payload) > 0 {
+					writePayload(payload)
+				}
 			}
 		}
 	}
 }
 
 func postFrame(ctx context.Context, httpClient *http.Client, s model.ClientSession, frame []byte) error {
+	if ctx != nil && ctx.Err() != nil {
+		return context.Canceled
+	}
+	baseURL, activeHTTPClient, stopping := dataplaneActiveState()
+	if stopping {
+		return context.Canceled
+	}
+	if httpClient == nil {
+		httpClient = activeHTTPClient
+	}
+	if httpClient == nil || strings.TrimSpace(baseURL) == "" {
+		return context.Canceled
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" || strings.TrimSpace(parsed.Host) == "" {
+		return context.Canceled
+	}
 	payload := map[string]any{
 		"username":  strings.TrimSpace(s.Username),
-		"tunnel_id": s.TunnelID,
-		"frame_hex": hex.EncodeToString(frame),
+		"tunnel_id": fmt.Sprintf("%d", s.TunnelID),
+	}
+	if len(frame) > 0 {
+		payload["frame_hex"] = hex.EncodeToString(frame)
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(strings.TrimRight(strings.TrimSpace(activeBaseURL()), "/"), VPNFramePath), bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(strings.TrimRight(strings.TrimSpace(baseURL), "/"), VPNFramePath), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return err
 	}
@@ -1091,15 +1510,39 @@ func postFrame(ctx context.Context, httpClient *http.Client, s model.ClientSessi
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if len(body) > 0 {
+			return fmt.Errorf("vpn-frame status: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		}
 		return fmt.Errorf("vpn-frame status: %s", resp.Status)
 	}
+	dataplaneCtrs.FramePosts.Add(1)
 	return nil
 }
 
 func pollFrame(ctx context.Context, httpClient *http.Client, s model.ClientSession) (string, error) {
-	url := joinURL(strings.TrimRight(strings.TrimSpace(activeBaseURL()), "/"), VPNPollPath) + fmt.Sprintf("?tunnel_id=%d&username=%s", s.TunnelID, strings.TrimSpace(s.Username))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if ctx != nil && ctx.Err() != nil {
+		return "", context.Canceled
+	}
+	baseURL, activeHTTPClient, stopping := dataplaneActiveState()
+	if stopping {
+		return "", context.Canceled
+	}
+	if httpClient == nil {
+		httpClient = activeHTTPClient
+	}
+	if httpClient == nil || strings.TrimSpace(baseURL) == "" {
+		return "", context.Canceled
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" || strings.TrimSpace(parsed.Host) == "" {
+		return "", context.Canceled
+	}
+	q := url.Values{}
+	q.Set("tunnel_id", fmt.Sprintf("%d", s.TunnelID))
+	q.Set("username", strings.TrimSpace(s.Username))
+	urlStr := joinURL(strings.TrimRight(strings.TrimSpace(baseURL), "/"), VPNPollPath) + "?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1126,7 +1569,35 @@ func pollFrame(ctx context.Context, httpClient *http.Client, s model.ClientSessi
 func activeBaseURL() string {
 	activeMu.RLock()
 	defer activeMu.RUnlock()
+	if activeStopping {
+		return ""
+	}
 	return strings.TrimSpace(activeBase)
+}
+
+func ActiveTunName() string {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	if activeRuntime != nil {
+		return activeRuntime.InterfaceName()
+	}
+	return "tlsvpn0"
+}
+
+func SetDataplaneLogger(fn func(string)) {
+	dataplaneLogMu.Lock()
+	dataplaneLogger = fn
+	dataplaneLogMu.Unlock()
+}
+
+func dataplaneLogf(format string, args ...any) {
+	dataplaneLogMu.RLock()
+	fn := dataplaneLogger
+	dataplaneLogMu.RUnlock()
+	if fn == nil {
+		return
+	}
+	fn(fmt.Sprintf(format, args...))
 }
 
 func buildVPNFrame(frameType uint8, tunnelID, seq uint64, payload []byte) []byte {
@@ -1156,33 +1627,9 @@ func parseVPNFrame(frame []byte) (uint8, uint64, []byte, error) {
 }
 
 func newPersistentMTLSHTTPClient(cfg state.Config, timeout time.Duration) (*http.Client, *http.Transport, error) {
-	if !fileExists(cfg.CACertFile) {
-		return nil, nil, fmt.Errorf("не найден CA сертификат")
-	}
-	if !fileExists(cfg.ClientCertFile) {
-		return nil, nil, fmt.Errorf("не найден client certificate")
-	}
-	if !fileExists(cfg.ClientKeyFile) {
-		return nil, nil, fmt.Errorf("не найден client key")
-	}
-	caData, err := os.ReadFile(cfg.CACertFile)
+	tlsCfg, err := buildMTLSTLSConfig(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read ca cert: %w", err)
-	}
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
-	}
-	if !pool.AppendCertsFromPEM(caData) {
-		return nil, nil, fmt.Errorf("invalid CA PEM")
-	}
-	cert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load client certificate: %w", err)
-	}
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{cert}}
-	if cfg.ServerName != "" {
-		tlsCfg.ServerName = cfg.ServerName
+		return nil, nil, err
 	}
 	tr := &http.Transport{
 		TLSClientConfig:     tlsCfg,

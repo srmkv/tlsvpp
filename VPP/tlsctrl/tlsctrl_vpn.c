@@ -66,6 +66,8 @@ clib_error_t *tlsctrl_vpn_init (vlib_main_t *vm)
   clib_memset (m, 0, sizeof (*m));
   clib_spinlock_init (&m->lock);
   m->next_tunnel_id = 1;
+  m->stale_timeout_ns = 30ULL * 1000000000ULL;
+  m->force_close_stale = 0;
   tlsctrl_vpn_stream_init (vm);
   return 0;
 }
@@ -228,6 +230,19 @@ int tlsctrl_vpn_tunnel_open (const char *username, const char *profile,
   return 0;
 }
 
+
+int tlsctrl_vpn_runtime_close (u64 tunnel_id)
+{
+  if (!tunnel_id)
+    return -1;
+
+  /* stream_detach already drops dataplane running/session-handle state. */
+  tlsctrl_vpn_stream_detach (tunnel_id);
+  tlsctrl_vpn_transport_on_tunnel_close (tunnel_id);
+  tlsctrl_vpn_transport_set_queue_depth (tunnel_id, 0);
+  return 0;
+}
+
 int tlsctrl_vpn_tunnel_close (const char *username)
 {
   tlsctrl_vpn_tunnel_t *tun;
@@ -239,12 +254,7 @@ int tlsctrl_vpn_tunnel_close (const char *username)
     tunnel_id = tun->tunnel_id;
   clib_spinlock_unlock (&m->lock);
   if (tunnel_id)
-    {
-      tlsctrl_vpn_dp_detach (tunnel_id);
-      tlsctrl_vpn_stream_detach (tunnel_id);
-      tlsctrl_vpn_transport_on_tunnel_close (tunnel_id);
-      tlsctrl_vpn_transport_set_queue_depth (tunnel_id, 0);
-    }
+    tlsctrl_vpn_runtime_close (tunnel_id);
   return tlsctrl_vpn_lease_release (username, 0);
 }
 
@@ -309,3 +319,43 @@ void tlsctrl_vpn_lease_result_free (tlsctrl_vpn_lease_result_t *r)
   vec_free (r->exclude_routes);
   clib_memset (r, 0, sizeof (*r));
 }
+
+void
+tlsctrl_vpn_policy_get (u64 *stale_timeout_ns, u8 *force_close_stale)
+{
+  tlsctrl_vpn_main_t *m = &tlsctrl_vpn_main;
+  clib_spinlock_lock (&m->lock);
+  if (stale_timeout_ns)
+    *stale_timeout_ns = m->stale_timeout_ns;
+  if (force_close_stale)
+    *force_close_stale = m->force_close_stale;
+  clib_spinlock_unlock (&m->lock);
+}
+
+void
+tlsctrl_vpn_policy_set (u64 stale_timeout_ns, u8 force_close_stale)
+{
+  tlsctrl_vpn_main_t *m = &tlsctrl_vpn_main;
+  clib_spinlock_lock (&m->lock);
+  m->stale_timeout_ns = stale_timeout_ns;
+  m->force_close_stale = force_close_stale ? 1 : 0;
+  clib_spinlock_unlock (&m->lock);
+}
+int
+tlsctrl_vpn_find_tunnel_id_by_username (const char *username, u64 *tunnel_id)
+{
+  tlsctrl_vpn_tunnel_t *tun;
+  if (tunnel_id)
+    *tunnel_id = 0;
+  if (!username)
+    return -1;
+
+  clib_spinlock_lock_if_init (&tlsctrl_vpn_main.lock);
+  tun = tvpn_find_tunnel_user (username);
+  if (tun && tunnel_id)
+    *tunnel_id = tun->tunnel_id;
+  clib_spinlock_unlock_if_init (&tlsctrl_vpn_main.lock);
+
+  return tun ? 0 : -1;
+}
+

@@ -13,9 +13,9 @@ package mfib_types
 
 import (
 	"strconv"
+	"tlsctrl-agent/internal/vppbinapi/fib_types"
+	_ "tlsctrl-agent/internal/vppbinapi/ip_types"
 
-	fib_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/fib_types"
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
 	api "go.fd.io/govpp/api"
 )
 

@@ -14,9 +14,9 @@ import (
 
 	govpp "go.fd.io/govpp"
 
-	"github.com/srmkv/tlsctrl-agent/internal/model"
-	tlsctrl "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/tlsctrl"
-	tlsctrlvpn "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/tlsctrlvpn"
+	"tlsctrl-agent/internal/model"
+	tlsctrl "tlsctrl-agent/internal/vppbinapi/tlsctrl"
+	tlsctrlvpn "tlsctrl-agent/internal/vppbinapi/tlsctrlvpn"
 )
 
 type Backend struct {

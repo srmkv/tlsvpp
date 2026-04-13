@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"tlsctrl-agent/internal/vppbinapi/memclnt"
 
-	memclnt "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/memclnt"
 	api "go.fd.io/govpp/api"
 )
 

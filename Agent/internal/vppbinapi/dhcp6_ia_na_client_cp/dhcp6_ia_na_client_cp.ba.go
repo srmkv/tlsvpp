@@ -11,7 +11,8 @@
 package dhcp6_ia_na_client_cp
 
 import (
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

@@ -237,6 +237,7 @@ tlsctrl_vpn_dp_attach (u64 tunnel_id, u64 session_handle)
   tlsctrl_vpn_dp_session_t *s;
   u8 had_runtime = 0;
   u64 now = clib_cpu_time_now ();
+  u32 bind_thread = tlsctrl_vpn_thread_index_from_session_handle (session_handle);
 
   clib_spinlock_lock (&m->lock);
   s = tvpn_dp_find (tunnel_id);
@@ -249,19 +250,48 @@ tlsctrl_vpn_dp_attach (u64 tunnel_id, u64 session_handle)
       s->fib_index = ~0;
       s->route_bound = 0;
       s->tx_ready = 0;
+      s->owner_thread_index = ~0;
+      s->last_bind_thread_index = ~0;
+    }
+
+  s->last_bind_thread_index = bind_thread;
+  if (bind_thread != ~0 && s->owner_thread_index == ~0)
+    s->owner_thread_index = bind_thread;
+
+  if (bind_thread != ~0 && s->owner_thread_index != ~0
+      && s->owner_thread_index != bind_thread && s->running)
+    {
+      s->wrong_worker_hits += 1;
+      s->handoff_count += 1;
+      s->last_seen_unix_ns = now;
+      clib_spinlock_unlock (&m->lock);
+      return 1;
     }
 
   had_runtime = s->running || s->session_handle || s->connected_at_unix_ns ||
                 s->rx_frames || s->tx_frames || s->tx_queue_depth ||
                 (s->pending_frames && vec_len (s->pending_frames));
 
+  if (had_runtime && s->session_handle == session_handle)
+    {
+      s->running = 1;
+      s->is_up = 1;
+      s->tx_ready = session_handle ? 1 : s->tx_ready;
+      s->last_seen_unix_ns = now;
+      clib_spinlock_unlock (&m->lock);
+      return 0;
+    }
+
   if (had_runtime)
     {
       tvpn_dp_free_pending_frames (s, 1 /* account_drop */);
       tvpn_dp_reset_runtime_counters (s);
       s->session_reset_count += 1;
+      s->stale_reap_count += 1;
     }
 
+  if (s->session_open_count)
+    s->reopen_count += 1;
   s->session_open_count += 1;
   s->connect_generation += 1;
   s->connected_at_unix_ns = now;
@@ -287,12 +317,25 @@ tlsctrl_vpn_dp_set_session_handle (u64 tunnel_id, u64 session_handle)
 {
   tvpn_main_t *m = &tlsctrl_vpn_main;
   tlsctrl_vpn_dp_session_t *s;
+  u32 bind_thread = tlsctrl_vpn_thread_index_from_session_handle (session_handle);
   clib_spinlock_lock (&m->lock);
   s = tvpn_dp_find (tunnel_id);
   if (!s)
     {
       clib_spinlock_unlock (&m->lock);
       return -1;
+    }
+  s->last_bind_thread_index = bind_thread;
+  if (bind_thread != ~0 && s->owner_thread_index == ~0)
+    s->owner_thread_index = bind_thread;
+  if (bind_thread != ~0 && s->owner_thread_index != ~0
+      && s->owner_thread_index != bind_thread && s->running)
+    {
+      s->wrong_worker_hits += 1;
+      s->handoff_count += 1;
+      s->last_seen_unix_ns = clib_cpu_time_now ();
+      clib_spinlock_unlock (&m->lock);
+      return 1;
     }
   s->session_handle = session_handle;
   s->last_seen_unix_ns = clib_cpu_time_now ();
@@ -318,6 +361,8 @@ tlsctrl_vpn_dp_configure (u64 tunnel_id, const char *assigned_ip,
       s->fib_index = ~0;
       s->route_bound = 0;
       s->tx_ready = 0;
+      s->owner_thread_index = ~0;
+      s->last_bind_thread_index = ~0;
     }
   tvpn_set_str (&s->assigned_ip, assigned_ip);
   if (!s->if_name)
@@ -349,7 +394,7 @@ tlsctrl_vpn_dp_detach (u64 tunnel_id)
       return -1;
     }
 
-  if (s->running || s->session_handle || s->connected_at_unix_ns)
+  if (s->running || s->session_handle || s->is_up)
     s->session_close_count += 1;
 
   tvpn_dp_free_pending_frames (s, 1 /* account_drop */);
@@ -364,6 +409,7 @@ tlsctrl_vpn_dp_detach (u64 tunnel_id)
   s->stage10_bridge_enabled = 0;
   s->stage11_auto_enabled = 0;
   s->stage13_auto_hook_enabled = 0;
+  s->connected_at_unix_ns = 0;
   s->last_tx_unix_ns = now;
   s->last_seen_unix_ns = now;
   clib_spinlock_unlock (&m->lock);
@@ -387,6 +433,94 @@ tlsctrl_vpn_dp_set_queue_depth (u64 tunnel_id, u32 depth)
   clib_spinlock_unlock (&m->lock);
   return 0;
 }
+
+
+int
+tlsctrl_vpn_dp_clear_runtime_counters (u64 tunnel_id, int preserve_lifecycle)
+{
+  tvpn_main_t *m = &tlsctrl_vpn_main;
+  tlsctrl_vpn_dp_session_t *s;
+  clib_spinlock_lock (&m->lock);
+  s = tvpn_dp_find (tunnel_id);
+  if (!s)
+    {
+      clib_spinlock_unlock (&m->lock);
+      return -1;
+    }
+
+  tvpn_dp_free_pending_frames (s, 0 /* account_drop */);
+  tvpn_dp_reset_runtime_counters (s);
+  if (!preserve_lifecycle)
+    {
+      s->session_open_count = 0;
+      s->session_close_count = 0;
+      s->session_reset_count = 0;
+      s->connect_generation = 0;
+      s->reopen_count = 0;
+      s->stale_reap_count = 0;
+      s->forced_close_count = 0;
+    }
+  s->last_seen_unix_ns = clib_cpu_time_now ();
+  clib_spinlock_unlock (&m->lock);
+
+  tlsctrl_vpn_transport_clear_runtime_counters (tunnel_id, preserve_lifecycle);
+  return 0;
+}
+
+int
+tlsctrl_vpn_dp_reap_stale_sessions (u64 timeout_ns, u8 force_close,
+                                    u32 *stale_found, u32 *forced_closed)
+{
+  tvpn_main_t *m = &tlsctrl_vpn_main;
+  tlsctrl_vpn_dp_session_t *s;
+  u64 now = clib_cpu_time_now ();
+  u64 *close_ids = 0;
+  u32 stale = 0, forced = 0;
+
+  if (stale_found)
+    *stale_found = 0;
+  if (forced_closed)
+    *forced_closed = 0;
+  if (!timeout_ns)
+    return 0;
+
+  clib_spinlock_lock (&m->lock);
+  vec_foreach (s, m->dp_sessions)
+    {
+      if (!s->running || !s->last_seen_unix_ns)
+        continue;
+      if ((now - s->last_seen_unix_ns) < timeout_ns)
+        continue;
+
+      stale += 1;
+      if (force_close)
+        {
+          s->forced_close_count += 1;
+          s->stale_reap_count += 1;
+          vec_add1 (close_ids, s->tunnel_id);
+          forced += 1;
+        }
+    }
+  clib_spinlock_unlock (&m->lock);
+
+  if (force_close)
+    {
+      u32 i;
+      for (i = 0; i < vec_len (close_ids); i++)
+        {
+          tlsctrl_vpn_runtime_close (close_ids[i]);
+          tlsctrl_vpn_lease_release (0, close_ids[i]);
+        }
+    }
+
+  vec_free (close_ids);
+  if (stale_found)
+    *stale_found = stale;
+  if (forced_closed)
+    *forced_closed = forced;
+  return 0;
+}
+
 
 int
 tlsctrl_vpn_dp_note_drop (u64 tunnel_id, u32 reason)

@@ -226,11 +226,52 @@ func (m *Manager) UpdateSettings(clientPublicURL, serverName string, extraSANs [
 }
 
 func (m *Manager) IssueBundle(username, profile string) ([]byte, string, error) {
+	return m.IssueBundleForTarget(username, profile, m.ClientURL, m.ServerName)
+}
+
+func (m *Manager) saveClientCertInfoForTargetLocked(username string, cert *x509.Certificate, serverURL, serverName string) error {
+	if cert == nil {
+		return nil
+	}
+	if strings.TrimSpace(serverURL) == "" {
+		serverURL = m.ClientURL
+	}
+	if strings.TrimSpace(serverName) == "" {
+		serverName = m.ServerName
+	}
+	info := ClientCertInfo{
+		Username:         username,
+		Serial:           strings.ToLower(cert.SerialNumber.Text(16)),
+		SubjectCN:        cert.Subject.CommonName,
+		IssuerCN:         cert.Issuer.CommonName,
+		NotBefore:        cert.NotBefore.UTC().Format(time.RFC3339),
+		NotAfter:         cert.NotAfter.UTC().Format(time.RFC3339),
+		KeyAlgorithm:     "RSA",
+		KeyBits:          keyBits(cert),
+		ExtKeyUsage:      ekuNames(cert),
+		BundleServerURL:  strings.TrimSpace(serverURL),
+		BundleServerName: strings.TrimSpace(serverName),
+		Available:        true,
+	}
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal client cert info: %w", err)
+	}
+	return os.WriteFile(m.certInfoPath(username), data, 0o600)
+}
+
+func (m *Manager) IssueBundleForTarget(username, profile, serverURL, serverName string) ([]byte, string, error) {
 	if err := m.Ensure(); err != nil {
 		return nil, "", err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if strings.TrimSpace(serverURL) == "" {
+		serverURL = m.ClientURL
+	}
+	if strings.TrimSpace(serverName) == "" {
+		serverName = m.ServerName
+	}
 
 	clientCertPEM, clientKeyPEM, clientCert, err := generateClientCertPEM(username, m.caCert, m.caKey)
 	if err != nil {
@@ -246,8 +287,8 @@ func (m *Manager) IssueBundle(username, profile string) ([]byte, string, error) 
 	}{
 		Username:      username,
 		Profile:       strings.TrimSpace(profile),
-		ServerURL:     m.ClientURL,
-		ServerName:    m.ServerName,
+		ServerURL:     strings.TrimSpace(serverURL),
+		ServerName:    strings.TrimSpace(serverName),
 		IssuedAt:      time.Now().UTC().Format(time.RFC3339),
 		BundleVersion: 1,
 	}
@@ -273,7 +314,7 @@ func (m *Manager) IssueBundle(username, profile string) ([]byte, string, error) 
 	if err := zw.Close(); err != nil {
 		return nil, "", fmt.Errorf("close zip: %w", err)
 	}
-	if err := m.saveClientCertInfoLocked(username, clientCert); err != nil {
+	if err := m.saveClientCertInfoForTargetLocked(username, clientCert, serverURL, serverName); err != nil {
 		return nil, "", err
 	}
 	return buf.Bytes(), strings.ToLower(clientCert.SerialNumber.Text(16)), nil

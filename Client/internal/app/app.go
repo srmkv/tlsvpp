@@ -27,7 +27,7 @@ func Run() error {
 	a.Settings().SetTheme(newClientTheme(theme.DefaultTheme()))
 	w := a.NewWindow("TLS Client Linux")
 	w.Resize(fyne.NewSize(windowW, windowH))
-	w.SetFixedSize(true)
+	w.SetFixedSize(false)
 	ui := NewUI(a, w, cfg)
 	ui.Build()
 	w.ShowAndRun()

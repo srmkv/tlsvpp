@@ -20,7 +20,12 @@ import (
 func (u *UI) toggleConnect() {
 	u.mu.RLock()
 	connected := u.connected
+	reconnecting := u.reconnecting
+	disconnecting := u.disconnecting
 	u.mu.RUnlock()
+	if reconnecting || disconnecting {
+		return
+	}
 	if connected {
 		u.disconnectOnce()
 		return
@@ -69,12 +74,21 @@ func (u *UI) connectOnce() {
 		dialog.ShowError(err, u.window)
 		return
 	}
+	u.mu.Lock()
+	u.disconnecting = false
+	u.reconnecting = false
+	u.manualDisconnectWanted = false
+	u.mu.Unlock()
 	u.setStatus("Подключение...")
 	u.appendLog("Попытка подключения к VPN plugin")
 	u.updateConnectionUI(false, "pending")
+	client.SetDataplaneLogger(func(msg string) { u.appendLog(msg) })
 	go func() {
 		session, err := client.ConnectVPN(u.cfg)
 		if err != nil {
+			u.mu.Lock()
+			u.reconnecting = false
+			u.mu.Unlock()
 			u.setStatus("Ошибка подключения: " + err.Error())
 			u.appendLog("Ошибка подключения: " + err.Error())
 			u.showConnectErrorDialog(err)
@@ -91,10 +105,13 @@ func (u *UI) connectOnce() {
 		u.self = session
 		u.lastSuccess = time.Now().UTC()
 		u.connected = true
+		u.reconnecting = false
+		u.disconnecting = false
 		u.monitorFailures = 0
 		u.lastMonitorError = ""
 		u.mu.Unlock()
 		u.renderSelfState()
+		u.refreshVPNDetails()
 		u.updateConnectionUI(true, "connected")
 		u.setStatus("Подключено")
 		u.appendLog("VPN bind выполнен, tunnel_id=" + strings.TrimSpace(formatTunnelID(session.TunnelID)))
@@ -220,12 +237,25 @@ func (u *UI) disconnectOnce() {
 		dialog.ShowError(err, u.window)
 		return
 	}
+	u.mu.Lock()
+	if u.disconnecting {
+		u.mu.Unlock()
+		return
+	}
+	u.manualDisconnectWanted = true
+	u.disconnecting = true
+	u.reconnecting = false
+	u.connected = false
+	u.mu.Unlock()
 	u.setStatus("Отключение...")
 	u.appendLog("Запрошено отключение")
+	u.updateConnectionUI(true, "disconnecting")
 	go func() {
 		err := client.Disconnect(u.cfg)
 		u.mu.Lock()
 		u.connected = false
+		u.reconnecting = false
+		u.disconnecting = false
 		u.monitorFailures = 0
 		u.lastMonitorError = ""
 		u.mu.Unlock()
@@ -236,6 +266,7 @@ func (u *UI) disconnectOnce() {
 			return
 		}
 		u.markDisconnectedLocalReason("ручное отключение", "disconnected")
+		client.SetDataplaneLogger(nil)
 		u.setStatus("Клиент отключён")
 		u.appendLog("Клиент отключён")
 	}()
@@ -266,6 +297,9 @@ func (u *UI) monitorLoop() {
 		}
 		u.mu.RLock()
 		connected := u.connected
+		reconnecting := u.reconnecting
+		disconnecting := u.disconnecting
+		manualStop := u.manualDisconnectWanted
 		cfg := u.cfg
 		closing := u.closing
 		autoRefresh := u.autoRefresh
@@ -273,7 +307,7 @@ func (u *UI) monitorLoop() {
 		if closing {
 			return
 		}
-		if !connected {
+		if !connected || reconnecting || disconnecting || manualStop {
 			continue
 		}
 		session, err := client.FetchSelfSession(cfg)
@@ -292,6 +326,7 @@ func (u *UI) monitorLoop() {
 			u.appendLog("Связь с VPN plugin восстановлена")
 		}
 		u.renderSelfState()
+		u.refreshVPNDetails()
 		u.updateConnectionUI(true, "connected")
 		if autoRefresh {
 			go u.refreshProcesses()
@@ -329,9 +364,66 @@ func (u *UI) handleMonitorFailure(err error) {
 		u.setStatus("Проблема связи с сервером")
 	}
 	if count >= 3 {
-		_ = client.Disconnect(cfg)
-		u.markDisconnectedLocalReason("нет связи с VPN plugin: "+reason, "error")
+		u.startReconnect(cfg, reason)
 	}
+}
+
+func (u *UI) startReconnect(cfg state.Config, reason string) {
+	u.mu.Lock()
+	if u.reconnecting || u.disconnecting || u.manualDisconnectWanted || !u.connected || u.closing {
+		u.mu.Unlock()
+		return
+	}
+	u.reconnecting = true
+	u.mu.Unlock()
+
+	u.appendLog("Потеряна связь с VPN plugin, запускаю автовосстановление")
+	u.setStatus("Восстановление соединения...")
+	u.updateConnectionUI(true, "pending")
+
+	go func() {
+		session, err := client.ReconnectVPN(cfg, 3, time.Second)
+		if err != nil {
+			u.mu.Lock()
+			manualStop := u.manualDisconnectWanted
+			u.reconnecting = false
+			u.connected = false
+			u.monitorFailures = 0
+			u.lastMonitorError = ""
+			u.mu.Unlock()
+			if manualStop {
+				u.markDisconnectedLocalReason("ручное отключение", "disconnected")
+				return
+			}
+			u.appendLog("Автовосстановление не удалось: " + err.Error())
+			u.markDisconnectedLocalReason("автовосстановление не удалось: "+err.Error()+"; исходная причина: "+reason, "error")
+			return
+		}
+		u.mu.RLock()
+		manualStop := u.manualDisconnectWanted
+		u.mu.RUnlock()
+		if manualStop {
+			_ = client.Disconnect(cfg)
+			u.markDisconnectedLocalReason("ручное отключение", "disconnected")
+			return
+		}
+		u.mu.Lock()
+		u.self = session
+		u.lastSuccess = time.Now().UTC()
+		u.connected = true
+		u.reconnecting = false
+		u.disconnecting = false
+		u.manualDisconnectWanted = false
+		u.monitorFailures = 0
+		u.lastMonitorError = ""
+		u.mu.Unlock()
+		u.renderSelfState()
+		u.refreshVPNDetails()
+		u.updateConnectionUI(true, "connected")
+		u.setStatus("Соединение восстановлено")
+		u.appendLog("Соединение с VPN plugin восстановлено, tunnel_id=" + strings.TrimSpace(formatTunnelID(session.TunnelID)))
+		go u.refreshProcesses()
+	}()
 }
 
 func (u *UI) cleanupSeenCommands() {}
@@ -347,6 +439,9 @@ func (u *UI) quitApp() {
 	}
 	u.closing = true
 	u.connected = false
+	u.reconnecting = false
+	u.disconnecting = true
+	u.manualDisconnectWanted = true
 	u.autoRefresh = false
 	u.mu.Unlock()
 	select {

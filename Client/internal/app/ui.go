@@ -2,6 +2,8 @@ package app
 
 import (
 	"image/color"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -35,19 +37,22 @@ type UI struct {
 	app    fyne.App
 	window fyne.Window
 
-	mu               sync.RWMutex
-	cfg              state.Config
-	self             model.ClientSession
-	lastSuccess      time.Time
-	autoRefresh      bool
-	stopCh           chan struct{}
-	closing          bool
-	hasTray          bool
-	seenCmdIDs       map[string]time.Time
-	connected        bool
-	monitorFailures  int
-	lastMonitorError string
-	lastCommandError string
+	mu                     sync.RWMutex
+	cfg                    state.Config
+	self                   model.ClientSession
+	lastSuccess            time.Time
+	autoRefresh            bool
+	stopCh                 chan struct{}
+	closing                bool
+	hasTray                bool
+	seenCmdIDs             map[string]time.Time
+	connected              bool
+	reconnecting           bool
+	disconnecting          bool
+	manualDisconnectWanted bool
+	monitorFailures        int
+	lastMonitorError       string
+	lastCommandError       string
 
 	serverURL      *widget.Entry
 	serverName     *widget.Entry
@@ -99,12 +104,23 @@ type UI struct {
 	processRows     []ProcessRow
 	filteredProcess []ProcessRow
 
+	vpnIfaceName      *widget.Label
+	vpnIfaceState     *widget.Label
+	vpnIfaceAddrs     *widget.Label
+	vpnIfaceMAC       *widget.Label
+	vpnIfaceMTU       *widget.Label
+	vpnLastFrame      *widget.Label
+	vpnLastError      *widget.Label
+	vpnKernelStats    *widget.Entry
+	vpnRoutes         *widget.Entry
+	vpnDataplaneStats *widget.Entry
+
 	pages     map[string]fyne.CanvasObject
 	pageNames []string
 }
 
 func NewUI(app fyne.App, window fyne.Window, cfg state.Config) *UI {
-	return &UI{app: app, window: window, cfg: cfg, stopCh: make(chan struct{}), pageNames: []string{"Стартовая", "Конфигурация", "Приложения", "Журнал"}, seenCmdIDs: make(map[string]time.Time)}
+	return &UI{app: app, window: window, cfg: cfg, stopCh: make(chan struct{}), pageNames: []string{"Стартовая", "VPN", "Конфигурация", "Приложения", "Журнал"}, seenCmdIDs: make(map[string]time.Time)}
 }
 
 func (u *UI) Build() {
@@ -112,11 +128,12 @@ func (u *UI) Build() {
 	u.setupMenus()
 	u.setupTray()
 	startPage := u.wrapPage(u.buildStartPage())
+	vpnPage := u.wrapPage(u.buildVPNPage())
 	configPage := u.wrapPage(u.buildConfigPage())
 	appsPage := u.wrapPage(u.buildAppsPage())
 	journalPage := u.wrapPage(u.buildJournalPage())
-	u.pages = map[string]fyne.CanvasObject{"Стартовая": startPage, "Конфигурация": configPage, "Приложения": appsPage, "Журнал": journalPage}
-	contentStack := container.NewMax(startPage, configPage, appsPage, journalPage)
+	u.pages = map[string]fyne.CanvasObject{"Стартовая": startPage, "VPN": vpnPage, "Конфигурация": configPage, "Приложения": appsPage, "Журнал": journalPage}
+	contentStack := container.NewMax(startPage, vpnPage, configPage, appsPage, journalPage)
 	u.showPage("Стартовая")
 
 	navList := widget.NewList(
@@ -133,18 +150,21 @@ func (u *UI) Build() {
 
 	sidebarTop := container.NewVBox(widget.NewLabelWithStyle("TLS Client", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewLabel("Linux"), widget.NewSeparator())
 	sidebarBottom := container.NewVBox(widget.NewSeparator(), u.sidebarStatus, u.sidebarUptime)
-	navWrap := container.NewGridWrap(fyne.NewSize(180, 280), navList)
+	navWrap := container.NewVScroll(navList)
+	navWrap.SetMinSize(fyne.NewSize(180, 280))
 	sidebarInner := container.NewBorder(sidebarTop, sidebarBottom, nil, nil, navWrap)
-	sidebar := container.NewGridWrap(fyne.NewSize(sidebarW, windowH), widget.NewCard("", "", sidebarInner))
+	sidebar := widget.NewCard("", "", sidebarInner)
 
 	headerRight := widget.NewLabel("mTLS клиент для VPP plugin")
 	header := widget.NewCard("", "", container.NewBorder(nil, nil, u.headerSection, headerRight))
 	mainAreaInner := container.NewBorder(header, widget.NewCard("", "", u.status), nil, nil, contentStack)
-	mainArea := container.NewGridWrap(fyne.NewSize(mainW, mainH), mainAreaInner)
-	u.window.SetContent(container.NewHBox(sidebar, mainArea))
+	split := container.NewHSplit(sidebar, mainAreaInner)
+	split.Offset = 0.22
+	u.window.SetContent(split)
 	u.renderSelfState()
+	u.refreshVPNDetails()
 	u.updateConnectionUI(false, "")
-	u.setConnectedControls(false)
+	u.setConnectedControls(false, "")
 	u.appendLog("Клиент запущен")
 	go u.monitorLoop()
 	u.window.SetCloseIntercept(func() {
@@ -208,6 +228,22 @@ func (u *UI) initWidgets() {
 	u.selfLastSeen = widget.NewLabel("—")
 	u.selfSource = widget.NewLabel("tls")
 	u.selfLastUpdate = widget.NewLabel("—")
+	u.vpnIfaceName = widget.NewLabel("tlsvpn0")
+	u.vpnIfaceState = widget.NewLabel("нет")
+	u.vpnIfaceAddrs = widget.NewLabel("—")
+	u.vpnIfaceMAC = widget.NewLabel("—")
+	u.vpnIfaceMTU = widget.NewLabel("—")
+	u.vpnLastFrame = widget.NewLabel("—")
+	u.vpnLastError = widget.NewLabel("—")
+	u.vpnKernelStats = widget.NewMultiLineEntry()
+	u.vpnKernelStats.Disable()
+	u.vpnKernelStats.Wrapping = fyne.TextWrapWord
+	u.vpnRoutes = widget.NewMultiLineEntry()
+	u.vpnRoutes.Disable()
+	u.vpnRoutes.Wrapping = fyne.TextWrapWord
+	u.vpnDataplaneStats = widget.NewMultiLineEntry()
+	u.vpnDataplaneStats.Disable()
+	u.vpnDataplaneStats.Wrapping = fyne.TextWrapWord
 	for _, lbl := range []*widget.Label{
 		u.statusHint,
 		u.selfUsername,
@@ -226,6 +262,13 @@ func (u *UI) initWidgets() {
 		u.selfSource,
 		u.selfLastUpdate,
 		u.sidebarUptime,
+		u.vpnIfaceName,
+		u.vpnIfaceState,
+		u.vpnIfaceAddrs,
+		u.vpnIfaceMAC,
+		u.vpnIfaceMTU,
+		u.vpnLastFrame,
+		u.vpnLastError,
 	} {
 		if lbl != nil {
 			lbl.Wrapping = fyne.TextWrapWord
@@ -255,12 +298,22 @@ func (u *UI) setupMenus() {
 	mainMenu := fyne.NewMainMenu(
 		fyne.NewMenu("Файл", fyne.NewMenuItem("Загрузить конфигурацию", func() { u.loadBundle() }), fyne.NewMenuItemSeparator(), fyne.NewMenuItem("Скрыть окно", func() { u.window.Hide() }), fyne.NewMenuItem("Выход", func() { u.quitApp() })),
 		fyne.NewMenu("Подключение", fyne.NewMenuItem("Подключить / отключить", func() { u.toggleConnect() }), fyne.NewMenuItem("Автообновление", func() { u.toggleAutoRefresh() })),
-		fyne.NewMenu("Разделы", fyne.NewMenuItem("Стартовая", func() { u.showPage("Стартовая") }), fyne.NewMenuItem("Конфигурация", func() { u.showPage("Конфигурация") }), fyne.NewMenuItem("Приложения", func() { u.showPage("Приложения") }), fyne.NewMenuItem("Журнал", func() { u.showPage("Журнал") })),
+		fyne.NewMenu("Разделы", fyne.NewMenuItem("Стартовая", func() { u.showPage("Стартовая") }), fyne.NewMenuItem("VPN", func() { u.showPage("VPN") }), fyne.NewMenuItem("Конфигурация", func() { u.showPage("Конфигурация") }), fyne.NewMenuItem("Приложения", func() { u.showPage("Приложения") }), fyne.NewMenuItem("Журнал", func() { u.showPage("Журнал") })),
 	)
 	u.window.SetMainMenu(mainMenu)
 }
 
 func (u *UI) setupTray() {
+	if os.Getenv("TLSCLIENT_DISABLE_TRAY") == "1" || os.Geteuid() == 0 {
+		u.appendLog("Tray отключён для root/явного запрета")
+		return
+	}
+	if strings.TrimSpace(os.Getenv("DBUS_SESSION_BUS_ADDRESS")) == "" {
+		if _, err := exec.LookPath("dbus-launch"); err != nil {
+			u.appendLog("Tray отключён: нет DBUS_SESSION_BUS_ADDRESS и не найден dbus-launch")
+			return
+		}
+	}
 	desk, ok := u.app.(desktop.App)
 	if !ok {
 		return
@@ -279,7 +332,9 @@ func (u *UI) setupTray() {
 }
 
 func (u *UI) wrapPage(obj fyne.CanvasObject) fyne.CanvasObject {
-	return container.NewGridWrap(fyne.NewSize(pageW, pageH), obj)
+	scroll := container.NewVScroll(obj)
+	scroll.SetMinSize(fyne.NewSize(pageW, pageH))
+	return container.NewPadded(scroll)
 }
 
 func (u *UI) showPage(name string) {
@@ -293,6 +348,9 @@ func (u *UI) showPage(name string) {
 	u.headerSection.SetText(name)
 	if name == "Приложения" {
 		go u.refreshProcesses()
+	}
+	if name == "VPN" {
+		go u.refreshVPNDetails()
 	}
 }
 
@@ -343,6 +401,28 @@ func (u *UI) buildStartPage() fyne.CanvasObject {
 		container.NewGridWithColumns(2, identityCard, systemCard),
 		vpnCard,
 	)
+}
+
+func (u *UI) buildVPNPage() fyne.CanvasObject {
+	refreshBtn := widget.NewButtonWithIcon("Обновить диагностику", theme.ViewRefreshIcon(), func() { go u.refreshVPNDetails() })
+	copyBtn := widget.NewButtonWithIcon("В журнал", theme.ContentCopyIcon(), func() {
+		u.appendLog("VPN-диагностика:\n" + u.currentVPNDiagnosticText())
+		u.setStatus("VPN-диагностика добавлена в журнал")
+	})
+	ifaceCard := widget.NewCard("Интерфейс tlsvpn0", "", container.New(layout.NewFormLayout(),
+		widget.NewLabel("Имя"), u.vpnIfaceName,
+		widget.NewLabel("Состояние"), u.vpnIfaceState,
+		widget.NewLabel("Адреса"), u.vpnIfaceAddrs,
+		widget.NewLabel("MAC"), u.vpnIfaceMAC,
+		widget.NewLabel("MTU"), u.vpnIfaceMTU,
+		widget.NewLabel("Последний кадр"), u.vpnLastFrame,
+		widget.NewLabel("Последняя ошибка"), u.vpnLastError,
+	))
+	statsCard := widget.NewCard("Счётчики dataplane", "", container.NewGridWrap(fyne.NewSize(660, 120), u.vpnDataplaneStats))
+	kernelCard := widget.NewCard("Счётчики ядра", "", container.NewGridWrap(fyne.NewSize(660, 95), u.vpnKernelStats))
+	routesCard := widget.NewCard("Маршруты через VPN", "", container.NewGridWrap(fyne.NewSize(660, 120), u.vpnRoutes))
+	toolbar := widget.NewCard("Действия", "", container.NewHBox(refreshBtn, copyBtn))
+	return container.NewVBox(toolbar, ifaceCard, statsCard, kernelCard, routesCard)
 }
 
 func (u *UI) buildConfigPage() fyne.CanvasObject {

@@ -42,7 +42,7 @@
     .modalBg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
     .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:18px;width:min(920px,100%);max-height:88vh;overflow:auto}.modal .row{align-items:flex-start}.modal .field{min-width:0}
     .titleBar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.splitInfo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .kv{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:start}.kv .k{font-size:13px;font-weight:700;color:var(--muted)} .kv .v{font-size:14px;word-break:break-word}.sessionHistory{display:flex;flex-direction:column;gap:10px}.histItem{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f9fbfe}.histTop{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.histMeta{font-size:12px;color:var(--muted)}.roadmapList{display:flex;flex-direction:column;gap:12px}.roadmapCard{border:1px solid var(--line);border-radius:14px;background:#f9fbfe;overflow:hidden}.roadmapCard summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.roadmapCard summary::-webkit-details-marker{display:none}.roadmapHead{display:flex;flex-direction:column;gap:4px}.roadmapMeta{font-size:12px;color:var(--muted)}.roadmapBody{padding:0 14px 14px 14px}.timeline{position:relative;display:flex;flex-direction:column;gap:12px;margin:4px 0 0 0;padding-left:18px}.timeline:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:#dbe7f3}.step{position:relative;padding-left:18px}.step:before{content:'';position:absolute;left:-17px;top:4px;width:10px;height:10px;border-radius:999px;background:#94a3b8;border:2px solid #fff;box-shadow:0 0 0 2px #dbe7f3}.stepOpen:before{background:#2563eb}.stepHandshake:before{background:#16a34a}.stepActivity:before{background:#d97706}.stepClose:before{background:#dc2626}.stepTitle{font-size:14px;font-weight:700}.stepMeta{font-size:12px;color:var(--muted);margin-top:2px}.roadmapEmpty{padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fff}
+    .kv{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:start}.kv .k{font-size:13px;font-weight:700;color:var(--muted)} .kv .v{font-size:14px;word-break:break-word}.sessionHistory{display:flex;flex-direction:column;gap:10px}.histItem{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f9fbfe}.histTop{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.histMeta{font-size:12px;color:var(--muted)}.roadmapList{display:flex;flex-direction:column;gap:12px}.roadmapCard{border:1px solid var(--line);border-radius:14px;background:#f9fbfe;overflow:hidden}.roadmapCard summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.roadmapCard summary::-webkit-details-marker{display:none}.roadmapHead{display:flex;flex-direction:column;gap:4px}.roadmapMeta{font-size:12px;color:var(--muted)}.roadmapBody{padding:0 14px 14px 14px}.timeline{position:relative;display:flex;flex-direction:column;gap:12px;margin:4px 0 0 0;padding-left:18px}.timeline:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:#dbe7f3}.step{position:relative;padding-left:18px}.step:before{content:'';position:absolute;left:-17px;top:4px;width:10px;height:10px;border-radius:999px;background:#94a3b8;border:2px solid #fff;box-shadow:0 0 0 2px #dbe7f3}.stepOpen:before{background:#2563eb}.stepHandshake:before{background:#16a34a}.stepActivity:before{background:#d97706}.stepClose:before{background:#dc2626}.stepTitle{font-size:14px;font-weight:700}.stepMeta{font-size:12px;color:var(--muted);margin-top:2px}.roadmapEmpty{padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fff}.certActions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.certTextArea{width:100%;min-height:180px;border:1px solid var(--line);border-radius:12px;background:#f9fbfe;padding:12px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);white-space:pre;overflow:auto}.certTextArea[readonly]{background:#f9fbfe}
   
     .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
     .tabBtn{border-radius:999px;padding:10px 16px;background:#eef4ff;border-color:#d7e5ff}
@@ -76,7 +76,7 @@
     .healthPill.warn{background:#fff7ed;color:#b45309;border-color:#f5d8a8}
     .infoDot{width:20px;height:20px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;font-size:12px;font-weight:800;cursor:help;opacity:.85}
     .tableWrap table{min-width:1200px}
-    .statusCol{width:150px}
+    .statusCol,.statusCell{width:72px;max-width:72px;min-width:72px;white-space:nowrap}
 
     @media (max-width:1100px){.grid3,.grid4,.grid2{grid-template-columns:1fr}.profileFormGrid{grid-template-columns:1fr}.top{flex-direction:column}.top .card{min-width:unset;width:100%}}
 
@@ -501,9 +501,9 @@
 
 
 <div class="modalBg" id="certBg">
-  <div class="modal" style="width:min(900px,100%)">
+  <div class="modal" style="width:min(980px,100%)">
     <div class="titleBar">
-      <div style="font-weight:800">Сертификат пользователя: <span id="certUsernameTitle">—</span></div>
+      <div style="font-weight:800">Просмотр сертификата: <span id="certUsernameTitle">—</span></div>
       <button type="button" id="btnCloseCert">Закрыть</button>
     </div>
     <div class="grid2">
@@ -511,16 +511,34 @@
       <div class="kv"><div class="k">Серийный номер</div><div class="v mono" id="certSerial">—</div></div>
       <div class="kv"><div class="k">Subject CN</div><div class="v" id="certSubject">—</div></div>
       <div class="kv"><div class="k">Issuer CN</div><div class="v" id="certIssuer">—</div></div>
+      <div class="kv" style="grid-column:1 / span 2"><div class="k">Полный Subject</div><div class="v mono" id="certSubjectFull">—</div></div>
+      <div class="kv" style="grid-column:1 / span 2"><div class="k">Полный Issuer</div><div class="v mono" id="certIssuerFull">—</div></div>
       <div class="kv"><div class="k">Действует с</div><div class="v" id="certNotBefore">—</div></div>
       <div class="kv"><div class="k">Действует до</div><div class="v" id="certNotAfter">—</div></div>
       <div class="kv"><div class="k">Алгоритм ключа</div><div class="v" id="certKeyAlg">—</div></div>
       <div class="kv"><div class="k">Размер ключа</div><div class="v" id="certKeyBits">—</div></div>
+      <div class="kv"><div class="k">Signature algorithm</div><div class="v" id="certSignature">—</div></div>
       <div class="kv"><div class="k">Ext Key Usage</div><div class="v" id="certEKU">—</div></div>
+      <div class="kv" style="grid-column:1 / span 2"><div class="k">SAN</div><div class="v mono" id="certSANs">—</div></div>
+      <div class="kv" style="grid-column:1 / span 2"><div class="k">SHA1</div><div class="v mono" id="certFingerprintSha1">—</div></div>
+      <div class="kv" style="grid-column:1 / span 2"><div class="k">SHA256</div><div class="v mono" id="certFingerprintSha256">—</div></div>
       <div class="kv"><div class="k">Bundle server URL</div><div class="v" id="certBundleURL">—</div></div>
       <div class="kv"><div class="k">Bundle server name</div><div class="v" id="certBundleName">—</div></div>
       <div class="kv"><div class="k">Статус пользователя</div><div class="v" id="certEnabled">—</div></div>
       <div class="kv"><div class="k">Generation</div><div class="v" id="certGeneration">—</div></div>
       <div class="kv" style="grid-column:1 / span 2"><div class="k">Примечание</div><div class="v" id="certNote">—</div></div>
+    </div>
+    <div class="certActions">
+      <button type="button" id="btnCopyCertSummary">Скопировать состав</button>
+      <button type="button" id="btnCopyCertPem">Скопировать PEM</button>
+    </div>
+    <div class="field">
+      <label for="certCopyText">Состав сертификата</label>
+      <textarea id="certCopyText" class="certTextArea" readonly></textarea>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label for="certPEM">PEM сертификата</label>
+      <textarea id="certPEM" class="certTextArea" readonly></textarea>
     </div>
   </div>
 </div>

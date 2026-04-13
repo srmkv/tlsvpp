@@ -5,8 +5,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/srmkv/tlsctrl-agent/internal/config"
-	"github.com/srmkv/tlsctrl-agent/internal/vppclient"
+	"tlsctrl-agent/internal/config"
+	"tlsctrl-agent/internal/vppclient"
 )
 
 func newGovPPBackend(cfg config.Config) (vppclient.Client, error) {

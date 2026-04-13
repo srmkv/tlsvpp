@@ -65,18 +65,37 @@ func (u *UI) refreshLogView() {
 	fyne.Do(func() { u.logOutput.SetText(strings.Join(lines, "\n")) })
 }
 
-func (u *UI) setConnectedControls(connected bool) {
+func (u *UI) setConnectedControls(connected bool, rawStatus string) {
+	state := strings.ToLower(strings.TrimSpace(rawStatus))
 	fyne.Do(func() {
 		u.autoButton.Enable()
-		if connected {
-			u.connectButton.SetText("Отключить")
-			u.connectButton.SetIcon(theme.CancelIcon())
-			u.connectButton.Importance = widget.DangerImportance
-		} else {
-			u.connectButton.SetText("Подключить")
-			u.connectButton.SetIcon(theme.MediaPlayIcon())
-			u.connectButton.Importance = widget.SuccessImportance
-			u.autoButton.SetText("Автообновление")
+		switch state {
+		case "pending":
+			if connected {
+				u.connectButton.SetText("Восстановление...")
+			} else {
+				u.connectButton.SetText("Подключение...")
+			}
+			u.connectButton.SetIcon(theme.ViewRefreshIcon())
+			u.connectButton.Importance = widget.MediumImportance
+			u.connectButton.Disable()
+		case "disconnecting":
+			u.connectButton.SetText("Отключение...")
+			u.connectButton.SetIcon(theme.ViewRefreshIcon())
+			u.connectButton.Importance = widget.MediumImportance
+			u.connectButton.Disable()
+		default:
+			u.connectButton.Enable()
+			if connected {
+				u.connectButton.SetText("Отключить")
+				u.connectButton.SetIcon(theme.CancelIcon())
+				u.connectButton.Importance = widget.DangerImportance
+			} else {
+				u.connectButton.SetText("Подключить")
+				u.connectButton.SetIcon(theme.MediaPlayIcon())
+				u.connectButton.Importance = widget.SuccessImportance
+				u.autoButton.SetText("Автообновление")
+			}
 		}
 		u.connectButton.Refresh()
 	})
@@ -108,6 +127,11 @@ func (u *UI) updateConnectionUI(connected bool, rawStatus string) {
 		text = "ПОДКЛ"
 		hint = "Идёт установка соединения."
 		sidebarText = "Статус: подключение"
+	case "disconnecting":
+		fill = color.NRGBA{R: 249, G: 115, B: 22, A: 255}
+		text = "ОТКЛ"
+		hint = "Идёт корректное отключение."
+		sidebarText = "Статус: отключение"
 	}
 	fyne.Do(func() {
 		u.statusRect.FillColor = fill
@@ -117,7 +141,7 @@ func (u *UI) updateConnectionUI(connected bool, rawStatus string) {
 		u.statusHint.SetText(hint)
 		u.sidebarStatus.SetText(sidebarText)
 	})
-	u.setConnectedControls(connected)
+	u.setConnectedControls(connected, rawStatus)
 }
 
 func (u *UI) syncFormToConfig() error {
@@ -167,9 +191,24 @@ func (u *UI) markDisconnectedLocalReason(reason string, rawStatus string) {
 	}
 	u.self.Status = rawStatus
 	u.self.LastSeen = now
+	u.self.IP = ""
+	u.self.TunnelID = 0
+	u.self.Gateway = ""
+	u.self.DNSServers = ""
+	u.self.MTU = 0
+	u.self.MSS = 0
+	u.self.LeaseSeconds = 0
+	u.self.FullTunnel = false
+	u.self.ConnectedAt = ""
 	u.connected = false
+	u.reconnecting = false
+	u.disconnecting = false
+	if rawStatus != "disconnected" || reason != "ручное отключение" {
+		u.manualDisconnectWanted = false
+	}
 	u.mu.Unlock()
 	u.renderSelfState()
+	u.clearVPNDetailsView()
 	u.updateConnectionUI(false, rawStatus)
 	if strings.TrimSpace(reason) != "" {
 		u.appendLog("Соединение разорвано: " + reason)
@@ -179,6 +218,21 @@ func (u *UI) markDisconnectedLocalReason(reason string, rawStatus string) {
 
 func (u *UI) markDisconnectedLocal() {
 	u.markDisconnectedLocalReason("соединение разорвано", "disconnected")
+}
+
+func (u *UI) clearVPNDetailsView() {
+	fyne.Do(func() {
+		u.vpnIfaceName.SetText("tlsvpn0")
+		u.vpnIfaceState.SetText("нет")
+		u.vpnIfaceAddrs.SetText("—")
+		u.vpnIfaceMAC.SetText("—")
+		u.vpnIfaceMTU.SetText("—")
+		u.vpnLastFrame.SetText("—")
+		u.vpnLastError.SetText("—")
+		u.vpnKernelStats.SetText("—")
+		u.vpnRoutes.SetText("—")
+		u.vpnDataplaneStats.SetText("—")
+	})
 }
 
 func (u *UI) renderSelfState() {
@@ -273,6 +327,98 @@ func (u *UI) renderSelfState() {
 			u.sidebarUptime.SetText("Аптайм системы: " + system.DetectSystemUptime())
 		}
 	})
+}
+
+func (u *UI) refreshVPNDetails() {
+	ifaceName := client.ActiveTunName()
+	if strings.TrimSpace(ifaceName) == "" {
+		ifaceName = "tlsvpn0"
+	}
+	snap := system.DetectInterfaceSnapshot(ifaceName)
+	routes := system.DetectRoutesByInterface(ifaceName)
+	dp := client.SnapshotDataplane()
+	stateText := "нет"
+	if snap.Exists {
+		stateText = "есть"
+		if snap.Up {
+			stateText = "up"
+		} else {
+			stateText = "down"
+		}
+	}
+	addrText := "—"
+	if len(snap.Addresses) > 0 {
+		addrText = strings.Join(snap.Addresses, "\n")
+	}
+	routesText := "—"
+	if len(routes) > 0 {
+		routesText = strings.Join(routes, "\n")
+	}
+	kernelText := "Интерфейс не найден"
+	if snap.Exists {
+		kernelText = strings.Join([]string{
+			"RX bytes: " + formatUint64(snap.RxBytes),
+			"TX bytes: " + formatUint64(snap.TxBytes),
+			"RX packets: " + formatUint64(snap.RxPackets),
+			"TX packets: " + formatUint64(snap.TxPackets),
+		}, "\n")
+	}
+	dpLines := []string{
+		"Старт: " + empty(formatTime(dp.StartedAt)),
+		"TUN read: " + formatUint64(dp.TunReads) + " кадров / " + formatUint64(dp.TunReadBytes) + " байт",
+		"Frame POST: " + formatUint64(dp.FramePosts) + " ok / errors " + formatUint64(dp.FramePostErrors),
+		"Keepalive: " + formatUint64(dp.Keepalives) + " ok / errors " + formatUint64(dp.KeepaliveErrors),
+		"Poll: " + formatUint64(dp.PollRequests) + " запросов / " + formatUint64(dp.PollFrames) + " кадров / errors " + formatUint64(dp.PollErrors),
+		"TUN write: " + formatUint64(dp.TunWrites) + " кадров / " + formatUint64(dp.TunWriteBytes) + " байт",
+	}
+	lastFrame := formatTime(dp.LastFrameAt)
+	lastErr := empty(strings.TrimSpace(dp.LastError))
+	if strings.TrimSpace(dp.InterfaceName) != "" {
+		ifaceName = dp.InterfaceName
+	}
+	dpEmpty := strings.TrimSpace(dp.StartedAt) == "" && strings.TrimSpace(dp.LastFrameAt) == "" && strings.TrimSpace(dp.LastError) == "" &&
+		dp.TunReads == 0 && dp.TunReadBytes == 0 && dp.FramePosts == 0 && dp.FramePostErrors == 0 &&
+		dp.Keepalives == 0 && dp.KeepaliveErrors == 0 && dp.PollRequests == 0 && dp.PollFrames == 0 && dp.PollErrors == 0 &&
+		dp.TunWrites == 0 && dp.TunWriteBytes == 0
+	if !snap.Exists && dpEmpty {
+		kernelText = "—"
+		routesText = "—"
+		lastFrame = "—"
+		lastErr = "—"
+		dpLines = []string{"—"}
+	}
+	fyne.Do(func() {
+		u.vpnIfaceName.SetText(ifaceName)
+		u.vpnIfaceState.SetText(stateText)
+		u.vpnIfaceAddrs.SetText(addrText)
+		u.vpnIfaceMAC.SetText(empty(snap.MAC))
+		if snap.MTU > 0 {
+			u.vpnIfaceMTU.SetText(formatPID(snap.MTU))
+		} else {
+			u.vpnIfaceMTU.SetText("—")
+		}
+		u.vpnLastFrame.SetText(lastFrame)
+		u.vpnLastError.SetText(lastErr)
+		u.vpnKernelStats.SetText(kernelText)
+		u.vpnRoutes.SetText(routesText)
+		u.vpnDataplaneStats.SetText(strings.Join(dpLines, "\n"))
+	})
+}
+
+func (u *UI) currentVPNDiagnosticText() string {
+	parts := []string{
+		"Интерфейс: " + strings.TrimSpace(u.vpnIfaceName.Text),
+		"Состояние: " + strings.TrimSpace(u.vpnIfaceState.Text),
+		"Адреса: " + strings.ReplaceAll(strings.TrimSpace(u.vpnIfaceAddrs.Text), "\n", "; "),
+		"MAC: " + strings.TrimSpace(u.vpnIfaceMAC.Text),
+		"MTU: " + strings.TrimSpace(u.vpnIfaceMTU.Text),
+		"Последний кадр: " + strings.TrimSpace(u.vpnLastFrame.Text),
+		"Последняя ошибка: " + strings.TrimSpace(u.vpnLastError.Text),
+		"Dataplane:\n" + strings.TrimSpace(u.vpnDataplaneStats.Text),
+		"Kernel:\n" + strings.TrimSpace(u.vpnKernelStats.Text),
+		"Routes:\n" + strings.TrimSpace(u.vpnRoutes.Text),
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (u *UI) refreshProcesses() {
@@ -615,7 +761,8 @@ func formatTimeRFC3339Value(t time.Time) string {
 	}
 	return t.Local().Format("2006-01-02 15:04:05")
 }
-func formatPID(v int) string { return fmt.Sprintf("%d", v) }
+func formatPID(v int) string       { return fmt.Sprintf("%d", v) }
+func formatUint64(v uint64) string { return fmt.Sprintf("%d", v) }
 
 func parsePIDText(s string) int {
 	s = strings.TrimSpace(s)

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srmkv/tlsctrl-agent/internal/model"
-	"github.com/srmkv/tlsctrl-agent/internal/pki"
-	"github.com/srmkv/tlsctrl-agent/internal/vppclient"
+	"tlsctrl-agent/internal/model"
+	"tlsctrl-agent/internal/pki"
+	"tlsctrl-agent/internal/vppclient"
 )
 
 type forceDisconnectAller interface {
@@ -151,6 +151,7 @@ func (s *Service) deletePersistedUser(username string) error {
 		return err
 	}
 	delete(users, username)
+	s.deletePlacement(username)
 	return s.savePersistedUsers(users)
 }
 
@@ -543,7 +544,7 @@ func (s *Service) IssueBundle(ctx context.Context, username string, enabled bool
 		return nil, "", fmt.Errorf("profile %q not found", profile)
 	}
 	log.Printf("service IssueBundle start username=%q enabled=%v profile=%q", username, enabled, profile)
-	bundle, serial, err := s.pki.IssueBundle(username, profile)
+	bundle, serial, shard, err := s.issueBundleWithAutoPlacement(ctx, username, profile)
 	if err != nil {
 		log.Printf("service IssueBundle pki failed username=%q ms=%d error=%v", username, sinceMs(start), err)
 		return nil, "", err
@@ -563,7 +564,7 @@ func (s *Service) IssueBundle(ctx context.Context, username string, enabled bool
 	if err := s.persistUserRecord(username, serial, enabled, profile); err != nil {
 		return nil, "", err
 	}
-	log.Printf("service IssueBundle ok username=%q serial=%s ms=%d", username, shortSerial(serial), sinceMs(start))
+	log.Printf("service IssueBundle ok username=%q serial=%s shard=%s ms=%d", username, shortSerial(serial), shard.Name, sinceMs(start))
 	return bundle, serial, nil
 }
 
@@ -590,7 +591,7 @@ func (s *Service) ReissueBundle(ctx context.Context, username string, profile st
 			enabled = u.Enabled
 		}
 	}
-	bundle, serial, err := s.pki.IssueBundle(username, profile)
+	bundle, serial, shard, err := s.issueBundleWithAutoPlacement(ctx, username, profile)
 	if err != nil {
 		log.Printf("service ReissueBundle pki failed username=%q ms=%d error=%v", username, sinceMs(start), err)
 		return nil, "", err
@@ -605,7 +606,7 @@ func (s *Service) ReissueBundle(ctx context.Context, username string, profile st
 	if err := s.persistUserRecord(username, serial, enabled, profile); err != nil {
 		return nil, "", err
 	}
-	log.Printf("service ReissueBundle ok username=%q serial=%s ms=%d", username, shortSerial(serial), sinceMs(start))
+	log.Printf("service ReissueBundle ok username=%q serial=%s shard=%s ms=%d", username, shortSerial(serial), shard.Name, sinceMs(start))
 	return bundle, serial, nil
 }
 
@@ -962,6 +963,12 @@ func (s *Service) UserCertInfo(ctx context.Context, username string) (map[string
 					"enabled":            u.Enabled,
 					"generation":         u.Generation,
 					"profile":            profile,
+					"placement": func() any {
+						if p, ok := s.placementForUser(username); ok {
+							return p
+						}
+						return nil
+					}(),
 				}, nil
 			}
 		}
@@ -981,13 +988,19 @@ func (s *Service) UserCertInfo(ctx context.Context, username string) (map[string
 		"available":          info.Available,
 		"note":               info.Note,
 		"profile":            profile,
+		"placement": func() any {
+			if p, ok := s.placementForUser(username); ok {
+				return p
+			}
+			return nil
+		}(),
 	}, nil
 }
 
 func (s *Service) Health(ctx context.Context) map[string]any {
 	settings, _ := s.CurrentSettings()
 	profiles, _ := s.loadProfiles()
-	return map[string]any{
+	out := map[string]any{
 		"ok":                 true,
 		"vpp_required":       s.requireVPP,
 		"vpp_available":      s.vppAvailable(),
@@ -1000,6 +1013,8 @@ func (s *Service) Health(ctx context.Context) map[string]any {
 		"plugin_listen_port": settings.PluginListenPort,
 		"profiles_count":     len(profiles),
 	}
+	out["shards"] = s.shardSummary(ctx)
+	return out
 }
 
 func (s *Service) appPoliciesPath() string {

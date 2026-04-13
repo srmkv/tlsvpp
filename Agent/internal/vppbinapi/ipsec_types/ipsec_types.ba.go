@@ -13,10 +13,10 @@ package ipsec_types
 
 import (
 	"strconv"
+	_ "tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
+	"tlsctrl-agent/internal/vppbinapi/tunnel_types"
 
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
-	tunnel_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/tunnel_types"
 	api "go.fd.io/govpp/api"
 )
 

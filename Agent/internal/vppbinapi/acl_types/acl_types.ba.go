@@ -13,9 +13,9 @@ package acl_types
 
 import (
 	"strconv"
+	"tlsctrl-agent/internal/vppbinapi/ethernet_types"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
 
-	ethernet_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ethernet_types"
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
 	api "go.fd.io/govpp/api"
 )
 

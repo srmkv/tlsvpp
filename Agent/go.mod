@@ -1,4 +1,4 @@
-module github.com/srmkv/tlsctrl-agent
+module tlsctrl-agent
 
 go 1.24.0
 

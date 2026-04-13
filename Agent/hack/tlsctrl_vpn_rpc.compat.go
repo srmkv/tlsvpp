@@ -5,7 +5,7 @@ import (
     "fmt"
     "io"
 
-    memclnt "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/memclnt"
+    memclnt "tlsctrl-agent/internal/vppbinapi/memclnt"
     api "go.fd.io/govpp/api"
 )
 

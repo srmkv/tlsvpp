@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/srmkv/tlsctrl-agent/internal/model"
+	"tlsctrl-agent/internal/model"
 )
 
 func (s *Service) EvaluateAppPolicy(ctx context.Context, req model.AppPolicyEvaluateRequest) (model.AppPolicyDecision, error) {

@@ -13,10 +13,10 @@ package virtio
 
 import (
 	"strconv"
+	"tlsctrl-agent/internal/vppbinapi/ethernet_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/pci_types"
 
-	ethernet_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ethernet_types"
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
-	pci_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/pci_types"
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

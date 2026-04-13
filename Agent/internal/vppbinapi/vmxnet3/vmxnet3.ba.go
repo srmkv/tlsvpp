@@ -12,8 +12,9 @@
 package vmxnet3
 
 import (
-	ethernet_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ethernet_types"
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/ethernet_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

@@ -11,9 +11,10 @@
 package nat64
 
 import (
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
-	nat_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/nat_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
+	"tlsctrl-agent/internal/vppbinapi/nat_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

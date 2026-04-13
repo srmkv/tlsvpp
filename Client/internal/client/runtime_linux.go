@@ -9,11 +9,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/vishvananda/netlink"
 )
 
 type runtimeApplyInput struct {
@@ -33,8 +34,10 @@ type runtimeApplier struct {
 }
 
 type runtimeState struct {
-	ifName string
-	tun    *os.File
+	ifName   string
+	tunCtl   *os.File
+	tunRead  *os.File
+	tunWrite *os.File
 }
 
 func newRuntimeApplier() *runtimeApplier { return &runtimeApplier{ifName: "tlsvpn0"} }
@@ -47,51 +50,77 @@ func (a *runtimeApplier) Apply(ctx context.Context, in runtimeApplyInput) (*runt
 		a.mu.Unlock()
 		return st, nil
 	}
-	_ = run(ctx, "ip", "link", "set", a.ifName, "down")
-	_ = run(ctx, "ip", "link", "del", a.ifName)
-	_ = run(ctx, "ip", "tuntap", "del", "dev", a.ifName, "mode", "tun")
 
-	tun, err := createTun(a.ifName)
+	_ = a.deleteInterface()
+
+	tunCtl, tunRead, tunWrite, err := createTun(a.ifName)
 	if err != nil {
 		return nil, err
 	}
-	if err := run(ctx, "ip", "addr", "flush", "dev", a.ifName); err != nil {
-		_ = tun.Close()
+	cleanup := func(err error) (*runtimeState, error) {
+		_ = tunCtl.Close()
+		_ = tunRead.Close()
+		_ = tunWrite.Close()
+		_ = a.deleteInterface()
 		return nil, err
 	}
+
+	link, err := netlink.LinkByName(a.ifName)
+	if err != nil {
+		return cleanup(fmt.Errorf("link lookup %s: %w", a.ifName, err))
+	}
+
 	cidr := strings.TrimSpace(in.AssignedIP)
 	if !strings.Contains(cidr, "/") {
 		cidr += "/32"
 	}
-	if err := run(ctx, "ip", "addr", "add", cidr, "dev", a.ifName); err != nil {
-		_ = tun.Close()
-		return nil, err
+	addr, err := netlink.ParseAddr(cidr)
+	if err != nil {
+		return cleanup(fmt.Errorf("parse assigned ip %s: %w", cidr, err))
 	}
+	if err := netlink.AddrReplace(link, addr); err != nil {
+		return cleanup(fmt.Errorf("addr replace %s on %s: %w", cidr, a.ifName, err))
+	}
+	dataplaneLogf("RUNTIME apply: iface=%s addr=%s", a.ifName, cidr)
+
 	if in.MTU > 0 {
-		_ = run(ctx, "ip", "link", "set", "dev", a.ifName, "mtu", strconv.Itoa(in.MTU))
+		if err := netlink.LinkSetMTU(link, in.MTU); err != nil {
+			return cleanup(fmt.Errorf("set mtu %d on %s: %w", in.MTU, a.ifName, err))
+		}
 	}
-	if err := run(ctx, "ip", "link", "set", "dev", a.ifName, "up"); err != nil {
-		_ = tun.Close()
-		return nil, err
+	if err := netlink.LinkSetUp(link); err != nil {
+		return cleanup(fmt.Errorf("set link up %s: %w", a.ifName, err))
 	}
 
+	gw := strings.TrimSpace(in.Gateway)
+	if !in.FullTunnel && gw != "" {
+		if err := replaceRoute(link, gw+"/32", "", netlink.SCOPE_LINK); err != nil {
+			return cleanup(fmt.Errorf("gateway host route %s on %s: %w", gw, a.ifName, err))
+		}
+		dataplaneLogf("RUNTIME gateway host route applied: %s dev %s", gw+"/32", a.ifName)
+	}
 	for _, rt := range splitCSV(in.IncludeRoutes) {
-		_ = run(ctx, "ip", "route", "replace", rt, "dev", a.ifName)
+		if err := replaceRoute(link, rt, gw, netlink.SCOPE_UNIVERSE); err != nil {
+			dataplaneLogf("RUNTIME route replace failed: %s via %s dev %s err=%v", rt, gw, a.ifName, err)
+		} else {
+			dataplaneLogf("RUNTIME route applied: %s via %s dev %s", rt, gw, a.ifName)
+		}
 	}
 	if in.FullTunnel {
-		_ = run(ctx, "ip", "route", "replace", "default", "dev", a.ifName)
-	} else if strings.TrimSpace(in.Gateway) != "" {
-		_ = run(ctx, "ip", "route", "replace", strings.TrimSpace(in.Gateway)+"/32", "dev", a.ifName)
+		if err := replaceDefaultRoute(link, gw); err != nil {
+			dataplaneLogf("RUNTIME default route failed: %v", err)
+		} else {
+			dataplaneLogf("RUNTIME default route applied via %s", a.ifName)
+		}
 	}
 
 	dns := splitCSV(in.DNSServers)
 	if len(dns) > 0 {
-		args := append([]string{"dns", a.ifName}, dns...)
-		_ = run(ctx, "resolvectl", args...)
-		_ = run(ctx, "resolvectl", "domain", a.ifName, "~.")
+		applyDNS(ctx, a.ifName, dns)
 	}
 
-	st := &runtimeState{ifName: a.ifName, tun: tun}
+	st := &runtimeState{ifName: a.ifName, tunCtl: tunCtl, tunRead: tunRead, tunWrite: tunWrite}
+	dataplaneLogf("RUNTIME tun ready: iface=%s ctl_fd=%d read_fd=%d write_fd=%d", a.ifName, tunCtl.Fd(), tunRead.Fd(), tunWrite.Fd())
 	a.mu.Lock()
 	a.state = st
 	a.mu.Unlock()
@@ -103,15 +132,70 @@ func (a *runtimeApplier) Revert(ctx context.Context) error {
 	st := a.state
 	a.state = nil
 	a.mu.Unlock()
-	if st != nil && st.tun != nil {
-		_ = st.tun.Close()
+	if st != nil {
+		if st.tunCtl != nil {
+			_ = st.tunCtl.Close()
+		}
+		if st.tunRead != nil {
+			_ = st.tunRead.Close()
+		}
+		if st.tunWrite != nil {
+			_ = st.tunWrite.Close()
+		}
 	}
-	_ = run(ctx, "ip", "route", "del", "default", "dev", a.ifName)
-	_ = run(ctx, "ip", "addr", "flush", "dev", a.ifName)
-	_ = run(ctx, "ip", "link", "set", "dev", a.ifName, "down")
-	_ = run(ctx, "ip", "link", "del", a.ifName)
-	_ = run(ctx, "ip", "tuntap", "del", "dev", a.ifName, "mode", "tun")
+	return a.deleteInterface()
+}
+
+func (a *runtimeApplier) deleteInterface() error {
+	link, err := netlink.LinkByName(a.ifName)
+	if err != nil {
+		var nlErr netlink.LinkNotFoundError
+		if errors.As(err, &nlErr) {
+			return nil
+		}
+		return nil
+	}
+	_ = netlink.LinkSetDown(link)
+	if err := netlink.LinkDel(link); err != nil {
+		return fmt.Errorf("delete link %s: %w", a.ifName, err)
+	}
 	return nil
+}
+
+func replaceRoute(link netlink.Link, dstCIDR, gateway string, scope netlink.Scope) error {
+	_, dst, err := net.ParseCIDR(strings.TrimSpace(dstCIDR))
+	if err != nil {
+		return fmt.Errorf("parse route %s: %w", dstCIDR, err)
+	}
+	route := netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Scope:     scope,
+	}
+	if gw := net.ParseIP(strings.TrimSpace(gateway)); gw != nil {
+		route.Gw = gw
+		route.Flags = int(netlink.FLAG_ONLINK)
+	}
+	return netlink.RouteReplace(&route)
+}
+
+func replaceDefaultRoute(link netlink.Link, gateway string) error {
+	route := netlink.Route{LinkIndex: link.Attrs().Index}
+	if gw := net.ParseIP(strings.TrimSpace(gateway)); gw != nil {
+		route.Gw = gw
+		route.Flags = int(netlink.FLAG_ONLINK)
+	}
+	return netlink.RouteReplace(&route)
+}
+
+func applyDNS(ctx context.Context, ifName string, dns []string) {
+	args := append([]string{"dns", ifName}, dns...)
+	if err := run(ctx, "resolvectl", args...); err != nil {
+		dataplaneLogf("RUNTIME resolvectl dns failed: %v", err)
+	}
+	if err := run(ctx, "resolvectl", "domain", ifName, "~."); err != nil {
+		dataplaneLogf("RUNTIME resolvectl domain failed: %v", err)
+	}
 }
 
 func (a *runtimeApplier) TunFile() *os.File {
@@ -120,7 +204,28 @@ func (a *runtimeApplier) TunFile() *os.File {
 	if a.state == nil {
 		return nil
 	}
-	return a.state.tun
+	if a.state.tunRead != nil {
+		return a.state.tunRead
+	}
+	return a.state.tunCtl
+}
+
+func (a *runtimeApplier) TunReadFile() *os.File {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.state == nil {
+		return nil
+	}
+	return a.state.tunRead
+}
+
+func (a *runtimeApplier) TunWriteFile() *os.File {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.state == nil {
+		return nil
+	}
+	return a.state.tunWrite
 }
 
 const (
@@ -136,23 +241,37 @@ type ifreq struct {
 	_     [24 - ifnamsiz - 2]byte
 }
 
-func createTun(name string) (*os.File, error) {
-	f, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+func createTun(name string) (*os.File, *os.File, *os.File, error) {
+	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open /dev/net/tun: %w", err)
+		return nil, nil, nil, fmt.Errorf("open /dev/net/tun: %w", err)
 	}
 	var req ifreq
 	copy(req.Name[:], name)
 	req.Flags = iffTun | iffNoPI
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(tunsetiff), uintptr(unsafe.Pointer(&req)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(tunsetiff), uintptr(unsafe.Pointer(&req)))
 	if errno != 0 {
-		_ = f.Close()
+		_ = syscall.Close(fd)
 		if errors.Is(errno, syscall.EBUSY) {
-			return nil, fmt.Errorf("create runtime tun %s: device busy", name)
+			return nil, nil, nil, fmt.Errorf("create runtime tun %s: device busy", name)
 		}
-		return nil, fmt.Errorf("create runtime tun %s: %v", name, errno)
+		return nil, nil, nil, fmt.Errorf("create runtime tun %s: %v", name, errno)
 	}
-	return f, nil
+	dupR, err := syscall.Dup(fd)
+	if err != nil {
+		_ = syscall.Close(fd)
+		return nil, nil, nil, fmt.Errorf("dup tun read fd: %w", err)
+	}
+	dupW, err := syscall.Dup(fd)
+	if err != nil {
+		_ = syscall.Close(fd)
+		_ = syscall.Close(dupR)
+		return nil, nil, nil, fmt.Errorf("dup tun write fd: %w", err)
+	}
+	ctl := os.NewFile(uintptr(fd), "/dev/net/tun")
+	readF := os.NewFile(uintptr(dupR), "/dev/net/tun-read")
+	writeF := os.NewFile(uintptr(dupW), "/dev/net/tun-write")
+	return ctl, readF, writeF, nil
 }
 
 func detectPrimaryIP() string {
@@ -209,4 +328,14 @@ func run(ctx context.Context, name string, args ...string) error {
 		return fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (a *runtimeApplier) InterfaceName() string {
+	if a == nil {
+		return "tlsvpn0"
+	}
+	if strings.TrimSpace(a.ifName) == "" {
+		return "tlsvpn0"
+	}
+	return a.ifName
 }

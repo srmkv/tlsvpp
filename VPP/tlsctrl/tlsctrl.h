@@ -19,11 +19,21 @@ typedef struct
   session_handle_t session_handle;
   u32 session_index;
   u8 close_requested;
+  u8 active_counted;
+  u8 overload_rejected;
+  u8 rate_limit_rejected;
   u8 response_ready;
   u8 response_complete;
+  u8 keep_alive;
+  u8 request_in_progress;
+  u8 raw_mode;
+  u8 raw_upgrade_pending;
+  u32 raw_tunnel_id;
+  u8 *raw_username;
   u32 tx_offset;
   u64 rx_bytes;
   u64 tx_bytes;
+  u64 requests_served;
   u8 *request_data;
   u8 *response_data;
 } tlsctrl_conn_t;
@@ -100,6 +110,30 @@ typedef struct
   u64 http_4xx_responses;
   u64 http_5xx_responses;
   u64 parse_errors;
+
+  u64 listener_segment_size;
+  u64 listener_add_segment_size;
+  u64 listener_rx_fifo_size;
+  u64 listener_tx_fifo_size;
+  u64 listener_prealloc_fifo_pairs;
+  u32 max_live_connections;
+  u32 pause_threshold;
+  u32 resume_threshold;
+  u32 max_accepts_per_second;
+  u32 max_request_bytes;
+
+  volatile u64 active_connections;
+  u64 peak_active_connections;
+  u64 overload_rejects;
+  u64 rate_limit_rejects;
+  u64 request_too_large_rejects;
+  u64 listener_pause_count;
+  u64 listener_resume_count;
+  volatile u8 listener_pause_requested;
+  volatile u8 listener_resume_requested;
+  u8 listener_paused_by_overload;
+  u64 accept_window_start_unix_ns;
+  u32 accept_window_count;
 } tlsctrl_main_t;
 
 extern tlsctrl_main_t tlsctrl_main;
@@ -120,6 +154,13 @@ int tlsctrl_phase3b_apply_listener_config (u8 *addr, u16 port,
                                            u8 *server_key_pem,
                                            u8 *ca_cert_pem);
 int tlsctrl_phase3b_attach (void);
+int tlsctrl_phase3b_set_perf (u64 segment_size, u64 add_segment_size,
+                              u64 rx_fifo_size, u64 tx_fifo_size,
+                              u64 prealloc_fifo_pairs,
+                              u32 max_live_connections,
+                              u32 pause_threshold, u32 resume_threshold,
+                              u32 max_accepts_per_second,
+                              u32 max_request_bytes);
 int tlsctrl_phase3b_detach (void);
 int tlsctrl_phase3b_listen_enable (void);
 int tlsctrl_phase3b_listen_disable (void);
@@ -143,5 +184,6 @@ int tlsctrl_phase3b_client_set_disconnected (u8 *username, u8 is_disconnected);
 u8 *format_tlsctrl_phase3b_state (u8 *s, va_list *args);
 u8 *format_tlsctrl_phase3b_clients (u8 *s, va_list *args);
 u8 *format_tlsctrl_phase3b_users (u8 *s, va_list *args);
+u8 *format_tlsctrl_phase3b_listener (u8 *s, va_list *args);
 
 #endif /* included_tlsctrl_h */

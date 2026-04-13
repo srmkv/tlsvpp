@@ -11,9 +11,10 @@
 package lb
 
 import (
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
-	lb_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/lb_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
+	"tlsctrl-agent/internal/vppbinapi/lb_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

@@ -9,10 +9,14 @@ show_tlsctrl_vpn_stream_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cli_c
   (void) input; (void) cmd;
   vlib_cli_output (vm, "vpn stream: sessions=%u", vec_len (tlsctrl_vpn_main.stream_sessions));
   vec_foreach (s, tlsctrl_vpn_main.stream_sessions)
-    vlib_cli_output (vm, "  tunnel=%llu bound=%u running=%u sh=0x%llx rxf=%llu txf=%llu rxb=%llu txb=%llu krx=%llu ktx=%llu ip4rx=%llu ip4tx=%llu lrx=%llu ltx=%llu",
+    vlib_cli_output (vm, "  tunnel=%llu bound=%u running=%u sh=0x%llx owner=%u bind=%u wrong=%llu handoff=%llu drop=%llu rxf=%llu txf=%llu rxb=%llu txb=%llu krx=%llu ktx=%llu ip4rx=%llu ip4tx=%llu lrx=%llu ltx=%llu",
                      (unsigned long long) s->tunnel_id,
                      s->bound, s->running,
                      (unsigned long long) s->session_handle,
+                     s->owner_thread_index, s->last_bind_thread_index,
+                     (unsigned long long) s->wrong_worker_hits,
+                     (unsigned long long) s->handoff_count,
+                     (unsigned long long) s->handoff_drops,
                      (unsigned long long) s->rx_frames,
                      (unsigned long long) s->tx_frames,
                      (unsigned long long) s->rx_bytes,

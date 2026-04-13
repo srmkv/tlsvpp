@@ -92,6 +92,14 @@ typedef struct
   u64 session_close_count;
   u64 session_reset_count;
   u64 connect_generation;
+  u64 reopen_count;
+  u64 stale_reap_count;
+  u64 forced_close_count;
+  u32 owner_thread_index;
+  u32 last_bind_thread_index;
+  u64 wrong_worker_hits;
+  u64 handoff_count;
+  u64 handoff_drops;
   u8 route_bound;
   u8 tx_ready;
   u8 tx_hook_armed;
@@ -139,8 +147,14 @@ typedef struct
   u64 ipv4_tx;
   u64 last_rx_unix_ns;
   u64 last_tx_unix_ns;
+  u32 owner_thread_index;
+  u32 last_bind_thread_index;
+  u64 wrong_worker_hits;
+  u64 handoff_count;
+  u64 handoff_drops;
   u8 bound;
   u8 running;
+  u8 duplex_anchor;
 } tlsctrl_vpn_stream_session_t;
 
 typedef struct
@@ -152,6 +166,8 @@ typedef struct
   tlsctrl_vpn_dp_session_t *dp_sessions;
   tlsctrl_vpn_stream_session_t *stream_sessions;
   u32 next_tunnel_id;
+  u64 stale_timeout_ns;
+  u8 force_close_stale;
 } tlsctrl_vpn_main_t;
 
 extern tlsctrl_vpn_main_t tlsctrl_vpn_main;
@@ -162,6 +178,11 @@ int tlsctrl_vpn_stream_detach (u64 tunnel_id);
 int tlsctrl_vpn_stream_note_keepalive (u64 tunnel_id, int outbound);
 int tlsctrl_vpn_stream_note_ipv4 (u64 tunnel_id, u32 bytes, int outbound);
 int tlsctrl_vpn_stream_find_session (u64 tunnel_id, tlsctrl_vpn_stream_session_t **out);
+int tlsctrl_vpn_stream_attach_by_username (const char *username, u64 session_handle);
+int tlsctrl_vpn_stream_mark_duplex_anchor (u64 tunnel_id, u64 session_handle);
+int tlsctrl_vpn_stream_clear_duplex_anchor (u64 tunnel_id, u64 session_handle);
+int tlsctrl_vpn_stream_is_duplex_anchored (u64 tunnel_id, u64 session_handle);
+u32 tlsctrl_vpn_thread_index_from_session_handle (u64 session_handle);
 
 clib_error_t *tlsctrl_vpn_init (vlib_main_t * vm);
 
@@ -184,11 +205,15 @@ int tlsctrl_vpn_tunnel_open (const char *username, const char *profile,
                              u8 **exclude_routes, u8 *full_tunnel,
                              u16 *mtu, u16 *mss, u32 *lease_seconds);
 int tlsctrl_vpn_tunnel_close (const char *username);
+int tlsctrl_vpn_find_tunnel_id_by_username (const char *username, u64 *tunnel_id);
+int tlsctrl_vpn_runtime_close (u64 tunnel_id);
 int tlsctrl_vpn_lease_acquire (const char *username, const char *profile,
                                const char *client_ip, u64 now_ns,
                                tlsctrl_vpn_lease_result_t *result);
 int tlsctrl_vpn_lease_release (const char *username, u64 tunnel_id);
 void tlsctrl_vpn_lease_result_free (tlsctrl_vpn_lease_result_t *r);
+void tlsctrl_vpn_policy_get (u64 *stale_timeout_ns, u8 *force_close_stale);
+void tlsctrl_vpn_policy_set (u64 stale_timeout_ns, u8 force_close_stale);
 
 #endif
 
@@ -238,6 +263,8 @@ int tlsctrl_vpn_dp_stage13_note_auto (u64 tunnel_id, u32 bytes);
 int tlsctrl_vpn_dp_enqueue_frame (u64 tunnel_id, u8 *frame);
 int tlsctrl_vpn_dp_dequeue_frame (u64 tunnel_id, u8 **out_frame);
 int tlsctrl_vpn_dp_dequeue_frame_by_username (const char *username, u64 *out_tunnel_id, u8 **out_frame);
+int tlsctrl_vpn_dp_clear_runtime_counters (u64 tunnel_id, int preserve_lifecycle);
+int tlsctrl_vpn_dp_reap_stale_sessions (u64 timeout_ns, u8 force_close, u32 *stale_found, u32 *forced_closed);
 
 void tlsctrl_vpn_stage16_feature_sync (void);
 
@@ -268,6 +295,9 @@ typedef struct
   u64 session_close_count;
   u64 session_reset_count;
   u64 connect_generation;
+  u64 reopen_count;
+  u64 stale_reap_count;
+  u64 forced_close_count;
   u8 *tun_if_name;
   u8 *assigned_ip;
   u8 *gateway;
@@ -291,3 +321,4 @@ int tlsctrl_vpn_transport_note_drop (u64 tunnel_id, u32 reason, int outbound);
 int tlsctrl_vpn_transport_set_queue_depth (u64 tunnel_id, u32 depth);
 int tlsctrl_vpn_transport_on_tunnel_close (u64 tunnel_id);
 int tlsctrl_vpn_transport_find_session (u64 tunnel_id, tlsctrl_vpn_transport_session_t **out);
+int tlsctrl_vpn_transport_clear_runtime_counters (u64 tunnel_id, int preserve_lifecycle);

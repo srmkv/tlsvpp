@@ -11,8 +11,9 @@
 package sfdp
 
 import (
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
-	sfdp_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/sfdp_types"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
+	"tlsctrl-agent/internal/vppbinapi/sfdp_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

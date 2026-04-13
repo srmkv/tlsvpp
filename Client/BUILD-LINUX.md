@@ -21,3 +21,15 @@
 
 
 Исправление: в install-local.sh и build-deb.sh поправлен путь к корню проекта.
+
+
+## Запуск без sudo
+```bash
+sudo setcap cap_net_admin,cap_net_raw+ep ./bin/tlsclient
+./bin/tlsclient
+```
+
+Проверка:
+```bash
+getcap ./bin/tlsclient
+```

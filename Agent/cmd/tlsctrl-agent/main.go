@@ -6,11 +6,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/srmkv/tlsctrl-agent/internal/config"
-	"github.com/srmkv/tlsctrl-agent/internal/httpapi"
-	"github.com/srmkv/tlsctrl-agent/internal/pki"
-	"github.com/srmkv/tlsctrl-agent/internal/service"
-	"github.com/srmkv/tlsctrl-agent/internal/vppclient"
+	"tlsctrl-agent/internal/config"
+	"tlsctrl-agent/internal/httpapi"
+	"tlsctrl-agent/internal/pki"
+	"tlsctrl-agent/internal/service"
+	"tlsctrl-agent/internal/vppclient"
 )
 
 func main() {

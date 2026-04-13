@@ -4,6 +4,8 @@ let sessions = [];
 let profiles = [];
 let appPolicies = [];
 let healthData = null;
+let runtimeData = null;
+let runtimeError = null;
 
 const POLICY_PRESETS = [
   { id:'vpn_tools', title:'VPN / туннели', meta:'OpenVPN, WireGuard, Forti, AnyConnect, GlobalProtect, WARP', patterns:[
@@ -111,13 +113,14 @@ function policyBadge(row) {
   return '';
 }
 function runtimeHintBadge(row) {
-  if (row.connected) return stateIcon('stateInfo', 'R', 'Runtime подтверждён');
+  if (row.runtime_connected) return stateIcon('stateInfo', 'R', `Runtime tunnel активен${row.runtime_profile ? ': ' + row.runtime_profile : ''}`);
   if (row.policy_blocked) return stateIcon('stateBad', 'R', row.policy_message || 'Подключение заблокировано политикой');
+  if (row.connected) return stateIcon('stateWarn', 'R', 'Есть agent session, но runtime tunnel не найден');
   return stateIcon('stateOff', 'R', 'Runtime не подтверждён');
 }
 function buildUserMenu(username, enabled) {
   return [
-    `<button class="menuItem" data-action="cert" data-user="${esc(username)}">📜 Параметры сертификата</button>`,
+    `<button class="menuItem" data-action="cert" data-user="${esc(username)}">📜 Просмотреть сертификат</button>`,
     `<button class="menuItem" data-action="bundle" data-user="${esc(username)}">📦 Скачать bundle</button>`,
     `<button class="menuItem" data-action="reissuebundle" data-user="${esc(username)}">🔐 Перевыпустить bundle</button>`,
     '<div class="menuDivider"></div>',
@@ -200,6 +203,18 @@ async function loadPolicies() {
 function profileNameList() {
   return profiles.map(p => p?.name).filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru'));
 }
+function runtimeTunnels() {
+  return Array.isArray(runtimeData?.tunnels) ? runtimeData.tunnels : [];
+}
+function runtimeSummary() {
+  return runtimeData?.summary || null;
+}
+function runtimeTunnelByUser(username) {
+  const key = String(username || '').trim();
+  if (!key) return null;
+  return runtimeTunnels().find((t) => String(t?.username || '').trim() === key) || null;
+}
+
 function refreshProfileSelects() {
   const options = ['<option value="">Без профиля</option>']
     .concat(profileNameList().map(name => `<option value="${esc(name)}">${esc(name)}</option>`)).join('');
@@ -220,6 +235,13 @@ function mergedRows() {
       enabled: !!u.enabled,
       profile: u.profile || '',
       connected: false,
+      runtime_connected: false,
+      runtime_profile: '',
+      runtime_tunnel_id: 0,
+      runtime_client_ip: '',
+      runtime_assigned_ip: '',
+      runtime_last_seen: '',
+      runtime_source: '',
       ip: '—', mac: '—', system_user: '—', os_name: '—', os_version: '—', system_uptime: '—',
       source: '—', connected_at: '', last_seen: '', apps_count: 0, apps_updated_at: '', interfaces: [],
       policy_blocked: false, policy_blocked_at: '', policy_name: '', policy_message: '', policy_matched_apps: []
@@ -228,27 +250,49 @@ function mergedRows() {
   for (const s of sessions || []) {
     const row = map.get(s.username) || { username: s.username || '—', cert_serial: s.cert_serial || '—', generation: 0, user_last_seen: '', enabled: true, profile: '' };
     row.connected = !!s.connected;
-    row.ip = s.ip || '—';
-    row.mac = s.mac || '—';
-    row.system_user = s.system_user || '—';
-    row.os_name = s.os_name || '—';
-    row.os_version = s.os_version || '—';
-    row.system_uptime = s.system_uptime || '—';
-    row.source = s.source || '—';
-    row.connected_at = s.connected_at || '';
+    row.ip = s.ip || row.ip || '—';
+    row.mac = s.mac || row.mac || '—';
+    row.system_user = s.system_user || row.system_user || '—';
+    row.os_name = s.os_name || row.os_name || '—';
+    row.os_version = s.os_version || row.os_version || '—';
+    row.system_uptime = s.system_uptime || row.system_uptime || '—';
+    row.source = s.source || row.source || '—';
+    row.connected_at = s.connected_at || row.connected_at || '';
     row.last_seen = s.last_seen || row.last_seen || '';
-    row.apps_count = s.apps_count || 0;
-    row.apps_updated_at = s.apps_updated_at || '';
+    row.apps_count = s.apps_count || row.apps_count || 0;
+    row.apps_updated_at = s.apps_updated_at || row.apps_updated_at || '';
     row.cert_serial = s.cert_serial || row.cert_serial || '—';
-    row.interfaces = Array.isArray(s.interfaces) ? s.interfaces : [];
+    row.interfaces = Array.isArray(s.interfaces) && s.interfaces.length ? s.interfaces : (row.interfaces || []);
     row.policy_blocked = !!s.policy_blocked;
-    row.policy_blocked_at = s.policy_blocked_at || '';
-    row.policy_name = s.policy_name || '';
-    row.policy_message = s.policy_message || '';
-    row.policy_matched_apps = Array.isArray(s.policy_matched_apps) ? s.policy_matched_apps : [];
+    row.policy_blocked_at = s.policy_blocked_at || row.policy_blocked_at || '';
+    row.policy_name = s.policy_name || row.policy_name || '';
+    row.policy_message = s.policy_message || row.policy_message || '';
+    row.policy_matched_apps = Array.isArray(s.policy_matched_apps) ? s.policy_matched_apps : (row.policy_matched_apps || []);
     map.set(row.username, row);
   }
+  for (const t of runtimeTunnels()) {
+    const username = String(t?.username || '').trim() || '—';
+    const row = map.get(username) || { username, cert_serial: '—', generation: 0, user_last_seen: '', enabled: !!t?.user_enabled, profile: t?.agent_profile || t?.profile || '' };
+    row.runtime_connected = !!t.running;
+    row.runtime_profile = t.profile || row.runtime_profile || row.profile || '';
+    row.runtime_tunnel_id = Number(t.tunnel_id || 0);
+    row.runtime_client_ip = t.client_ip || row.runtime_client_ip || '';
+    row.runtime_assigned_ip = t.assigned_ip || row.runtime_assigned_ip || '';
+    row.runtime_last_seen = t.last_seen || row.runtime_last_seen || '';
+    row.runtime_source = t.source || row.runtime_source || 'mtls-vpn';
+    row.profile = row.profile || t.agent_profile || t.profile || '';
+    if ((!row.ip || row.ip === '—') && t.assigned_ip) row.ip = t.assigned_ip;
+    if ((!row.last_seen || row.last_seen === '—') && t.last_seen) row.last_seen = t.last_seen;
+    if ((!row.source || row.source === '—') && t.source) row.source = t.source;
+    if ((!Array.isArray(row.interfaces) || !row.interfaces.length) && Array.isArray(t.interfaces)) row.interfaces = t.interfaces;
+    if ((!row.apps_count || row.apps_count === 0) && Number.isFinite(t.apps_count)) row.apps_count = t.apps_count || 0;
+    map.set(username, row);
+  }
   return Array.from(map.values()).sort((a, b) => {
+    const aUp = !!(a.runtime_connected || a.connected);
+    const bUp = !!(b.runtime_connected || b.connected);
+    if (aUp !== bUp) return aUp ? -1 : 1;
+    if ((!!a.runtime_connected) !== (!!b.runtime_connected)) return a.runtime_connected ? -1 : 1;
     if ((!!a.connected) !== (!!b.connected)) return a.connected ? -1 : 1;
     if ((!!a.policy_blocked) !== (!!b.policy_blocked)) return a.policy_blocked ? -1 : 1;
     return String(a.username).localeCompare(String(b.username), 'ru');
@@ -258,7 +302,7 @@ function updateHistory(rows) {
   const history = getHistoryStore();
   const reasons = getReasonStore();
   for (const row of rows) {
-    const status = row.connected ? 'connected' : (row.policy_blocked ? 'blocked_by_policy' : (reasons[row.username] === 'admin_disconnect' ? 'disconnected_by_admin' : 'disconnected'));
+    const status = (row.runtime_connected || row.connected) ? 'connected' : (row.policy_blocked ? 'blocked_by_policy' : (reasons[row.username] === 'admin_disconnect' ? 'disconnected_by_admin' : 'disconnected'));
     const item = { at: row.policy_blocked_at || new Date().toISOString(), status, cert_serial: row.cert_serial || '', connected_at: row.connected_at || '', last_seen: row.last_seen || row.user_last_seen || '', ip: row.ip || '—', mac: row.mac || '—', source: row.source || '—', system_user: row.system_user || '—', os_name: row.os_name || '—', os_version: row.os_version || '—', system_uptime: row.system_uptime || '—', policy_name: row.policy_name || '', policy_message: row.policy_message || '', policy_matched_apps: Array.isArray(row.policy_matched_apps) ? row.policy_matched_apps.slice() : [] };
 
     const list = Array.isArray(history[row.username]) ? history[row.username] : [];
@@ -278,6 +322,7 @@ function updateHistory(rows) {
 function renderHealth() {
   const ok = !!healthData?.ok;
   const healthMetaText = healthData ? JSON.stringify(healthData) : 'Проверьте /healthz';
+  const rs = runtimeSummary();
   if (byId('healthMeta')) byId('healthMeta').textContent = healthMetaText;
   if (byId('healthPill')) {
     byId('healthPill').className = 'healthPill ' + (ok ? 'ok' : 'warn');
@@ -295,7 +340,11 @@ function renderHealth() {
     byId('kpiProfilesMeta').textContent = `С pool: ${withPool}, full-tunnel: ${profiles.filter(p => p.full_tunnel).length}`;
   }
   if (byId('kpiUsers')) byId('kpiUsers').textContent = String(users.length);
-  if (byId('kpiUsersMeta')) byId('kpiUsersMeta').textContent = `Включено: ${users.filter(u => u.enabled).length}, active session: ${sessions.filter(s => s.connected).length}, policy deny: ${sessions.filter(s => s.policy_blocked).length}`;
+  if (byId('kpiUsersMeta')) {
+    const agentConnected = sessions.filter(s => s.connected).length;
+    const runtimeConnected = rs?.running_tunnels ?? runtimeTunnels().filter(t => t.running).length;
+    byId('kpiUsersMeta').textContent = `Включено: ${users.filter(u => u.enabled).length}, agent: ${agentConnected}, runtime: ${runtimeConnected}, policy deny: ${sessions.filter(s => s.policy_blocked).length}`;
+  }
 }
 function renderProfiles() {
   const tbody = byId('profileRows');
@@ -333,7 +382,7 @@ function renderUsers() {
   }
   tbody.innerHTML = rows.map((r) => (
     '<tr>' +
-      `<td><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${profileBadge(r)}${policyBadge(r)}${runtimeHintBadge(r)}</div></td>` +
+      `<td class="statusCell"><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${policyBadge(r)}</div></td>` +
       `<td>${esc(r.username)}</td>` +
       `<td>${esc(r.profile || '—')}</td>` +
       `<td class="mono">${esc(r.ip)}</td>` +
@@ -379,7 +428,7 @@ function openInfo(username) {
   if (byId('infoProfilePill')) byId('infoProfilePill').textContent = `Профиль: ${profileText}`;
   if (byId('infoSourcePill')) byId('infoSourcePill').textContent = `Источник: ${row.source || '—'}`;
   if (byId('infoProfileText')) byId('infoProfileText').textContent = profileText;
-  if (byId('infoRuntimeText')) byId('infoRuntimeText').textContent = row.connected ? 'Подтверждён по session API' : 'Не подтверждён';
+  if (byId('infoRuntimeText')) byId('infoRuntimeText').textContent = row.runtime_connected ? `Подтверждён по plugin runtime${row.runtime_tunnel_id ? ' · tunnel ' + row.runtime_tunnel_id : ''}` : (row.connected ? 'Есть agent session, но runtime tunnel не найден' : 'Не подтверждён');
   byId('infoIP').textContent = row.ip || '—';
   byId('infoMAC').textContent = row.mac || '—';
   byId('infoSystemUser').textContent = row.system_user || '—';
@@ -400,13 +449,14 @@ function closeInfo() { byId('infoBg').style.display = 'none'; }
 function buildSessionGroups(username) {
   const history = getHistoryStore();
   const items = (Array.isArray(history[username]) ? history[username] : []).slice().sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  const row = mergedRows().find((x) => x.username === username) || null;
   const groups = [];
   let current = null;
   for (const item of items) {
     const key = item.status || 'disconnected';
     if (key === 'connected') {
       if (!current) {
-        current = { id: item.connected_at || item.at, status: 'connected', ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: item.connected_at || item.at, lastSeen: item.last_seen || item.at, endedAt: '', steps: [ { kind: 'open', title: 'Открытие session', at: item.connected_at || item.at, meta: 'Agent session зафиксирована' }, { kind: 'handshake', title: 'Session подтверждена', at: item.at, meta: 'Клиент перешёл в состояние «подключён» по данным session API' } ] };
+        current = { id: item.connected_at || item.at, status: 'connected', ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: item.connected_at || item.at, lastSeen: item.last_seen || item.at, endedAt: '', steps: [ { kind: 'open', title: 'Открытие session', at: item.connected_at || item.at, meta: 'Session зафиксирована в agent/runtime' }, { kind: 'handshake', title: 'Session подтверждена', at: item.at, meta: 'Подключение подтверждено по данным control-plane' } ] };
       } else { current.lastSeen = item.last_seen || current.lastSeen; }
     } else {
       const closeTitle = key === 'disconnected_by_admin' ? 'Завершение сервером' : key === 'blocked_by_policy' ? 'Подключение заблокировано политикой' : 'Завершение session';
@@ -423,16 +473,43 @@ function buildSessionGroups(username) {
     }
   }
   if (current) groups.push(current);
-  return groups.reverse().map((group) => {
-    const hasActivity = group.lastSeen && group.lastSeen !== group.startedAt && group.lastSeen !== group.endedAt;
-    const steps = group.steps.slice();
-    if (hasActivity) {
-      const closeIndex = steps.findIndex(s => s.kind === 'close');
-      const activityStep = { kind: 'activity', title: 'Активность session', at: group.lastSeen, meta: 'Последняя активность по данным agent session API' };
-      if (closeIndex >= 0) steps.splice(closeIndex, 0, activityStep); else steps.push(activityStep);
+
+  const activeNow = !!(row && (row.runtime_connected || row.connected));
+  if (activeNow) {
+    const activeKey = row.connected_at || row.runtime_last_seen || row.last_seen || row.user_last_seen || new Date().toISOString();
+    const hasOpenGroup = groups.some((g) => !g.endedAt && (g.startedAt === activeKey || g.ip === (row.ip || row.runtime_assigned_ip || '—')));
+    if (!hasOpenGroup) {
+      groups.unshift({
+        id: 'live-' + username,
+        status: 'connected',
+        ip: row.ip || row.runtime_assigned_ip || '—',
+        mac: row.mac || '—',
+        source: row.runtime_source || row.source || '—',
+        startedAt: row.connected_at || row.runtime_last_seen || row.last_seen || row.user_last_seen || '',
+        lastSeen: row.last_seen || row.runtime_last_seen || row.user_last_seen || '',
+        endedAt: '',
+        steps: [
+          { kind: 'open', title: 'Открытие session', at: row.connected_at || row.runtime_last_seen || row.last_seen || new Date().toISOString(), meta: row.connected ? 'Agent session активна' : 'Активный runtime tunnel найден в plugin' },
+          { kind: 'handshake', title: 'Session активна сейчас', at: row.last_seen || row.runtime_last_seen || new Date().toISOString(), meta: row.runtime_connected ? `Plugin runtime подтверждён${row.runtime_tunnel_id ? ' · tunnel ' + row.runtime_tunnel_id : ''}` : 'Runtime tunnel не подтверждён' }
+        ]
+      });
     }
-    return { ...group, steps };
-  });
+  }
+
+  return groups
+    .map((group) => {
+      const hasActivity = group.lastSeen && group.lastSeen !== group.startedAt && group.lastSeen !== group.endedAt;
+      const steps = group.steps.slice();
+      if (hasActivity) {
+        const closeIndex = steps.findIndex(s => s.kind === 'close');
+        const activityStep = { kind: 'activity', title: 'Активность session', at: group.lastSeen, meta: 'Последняя активность по данным agent/runtime' };
+        if (closeIndex >= 0) steps.splice(closeIndex, 0, activityStep); else steps.push(activityStep);
+      }
+      const sortAt = group.lastSeen || group.endedAt || group.startedAt || '';
+      return { ...group, steps, sortAt };
+    })
+    .sort((a, b) => new Date(b.sortAt || 0).getTime() - new Date(a.sortAt || 0).getTime())
+    .map(({ sortAt, ...group }) => group);
 }
 function renderRoadmap(username) {
   const container = byId('roadmapList');
@@ -471,20 +548,67 @@ async function openCert(username) {
   byId('certUsername').textContent = cert.username || '—';
   byId('certSerial').textContent = cert.serial || '—';
   byId('certSubject').textContent = cert.subject_cn || '—';
+  byId('certSubjectFull').textContent = cert.subject || cert.subject_cn || '—';
   byId('certIssuer').textContent = cert.issuer_cn || '—';
+  byId('certIssuerFull').textContent = cert.issuer || cert.issuer_cn || '—';
   byId('certNotBefore').textContent = fmtDate(cert.not_before);
   byId('certNotAfter').textContent = fmtDate(cert.not_after);
-  byId('certKeyAlg').textContent = cert.key_algorithm || '—';
+  byId('certKeyAlg').textContent = cert.key_algorithm || cert.public_key_algorithm || '—';
   byId('certKeyBits').textContent = cert.key_bits ? String(cert.key_bits) : '—';
+  byId('certSignature').textContent = cert.signature_algorithm || '—';
   byId('certEKU').textContent = Array.isArray(cert.ext_key_usage) && cert.ext_key_usage.length ? cert.ext_key_usage.join(', ') : '—';
+  byId('certSANs').textContent = [
+    Array.isArray(cert.dns_names) && cert.dns_names.length ? 'DNS: ' + cert.dns_names.join(', ') : '',
+    Array.isArray(cert.ip_addresses) && cert.ip_addresses.length ? 'IP: ' + cert.ip_addresses.join(', ') : '',
+    Array.isArray(cert.email_addresses) && cert.email_addresses.length ? 'Email: ' + cert.email_addresses.join(', ') : '',
+    Array.isArray(cert.uris) && cert.uris.length ? 'URI: ' + cert.uris.join(', ') : ''
+  ].filter(Boolean).join('\n') || '—';
+  byId('certFingerprintSha1').textContent = cert.fingerprint_sha1 || '—';
+  byId('certFingerprintSha256').textContent = cert.fingerprint_sha256 || '—';
   byId('certBundleURL').textContent = cert.bundle_server_url || '—';
   byId('certBundleName').textContent = cert.bundle_server_name || '—';
   byId('certEnabled').textContent = cert.enabled === true ? 'Включен' : (cert.enabled === false ? 'Отключен' : '—');
   byId('certGeneration').textContent = cert.generation !== undefined ? String(cert.generation) : '—';
   byId('certNote').textContent = cert.note || '—';
+  byId('certCopyText').value = cert.copy_text || '—';
+  byId('certPEM').value = cert.pem || 'PEM не сохранён в metadata agent. Перевыпустите bundle, чтобы видеть PEM сертификата.';
+  const copySummaryBtn = byId('btnCopyCertSummary');
+  const copyPemBtn = byId('btnCopyCertPem');
+  if (copySummaryBtn) copySummaryBtn.dataset.copy = cert.copy_text || '';
+  if (copyPemBtn) {
+    copyPemBtn.dataset.copy = cert.pem || '';
+    copyPemBtn.disabled = !cert.pem;
+  }
   byId('certBg').style.display = 'flex';
 }
 function closeCert() { const bg = byId('certBg'); if (bg) bg.style.display = 'none'; }
+
+async function copyTextToClipboard(text, successMessage) {
+  const value = String(text || '').trim();
+  if (!value) {
+    alert('Нет данных для копирования');
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', 'readonly');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      document.body.removeChild(area);
+    }
+    alert(successMessage || 'Скопировано');
+  } catch (e) {
+    alert('Не удалось скопировать: ' + (e?.message || e || 'unknown error'));
+  }
+}
+
 function selectedProfileForUser(username) {
   const row = mergedRows().find(x => x.username === username);
   return row?.profile || '';
@@ -504,8 +628,17 @@ async function loadUsersAndSessions() {
   users = Array.isArray(u.users) ? u.users : [];
   sessions = Array.isArray(s.sessions) ? s.sessions : [];
 }
+async function loadPluginRuntime() {
+  try {
+    runtimeData = await jget('/api/admin/plugin/runtime');
+    runtimeError = null;
+  } catch (e) {
+    runtimeData = null;
+    runtimeError = String(e?.message || e || 'runtime unavailable');
+  }
+}
 async function loadAll() {
-  await Promise.all([loadUsersAndSessions(), loadProfiles(), loadPolicies(), loadHealth()]);
+  await Promise.all([loadUsersAndSessions(), loadProfiles(), loadPolicies(), loadHealth(), loadPluginRuntime()]);
   refreshProfileSelects();
   renderProfiles();
   renderPolicies();
@@ -1023,6 +1156,8 @@ byId('btnRefresh').addEventListener('click', loadAll);
 byId('btnCloseInfo').addEventListener('click', closeInfo);
 if (byId('btnCloseRoadmap')) byId('btnCloseRoadmap').addEventListener('click', closeRoadmap);
 if (byId('btnCloseCert')) byId('btnCloseCert').addEventListener('click', closeCert);
+if (byId('btnCopyCertSummary')) byId('btnCopyCertSummary').addEventListener('click', (e) => copyTextToClipboard(e.currentTarget?.dataset?.copy || byId('certCopyText')?.value || '', 'Состав сертификата скопирован'));
+if (byId('btnCopyCertPem')) byId('btnCopyCertPem').addEventListener('click', (e) => copyTextToClipboard(e.currentTarget?.dataset?.copy || byId('certPEM')?.value || '', 'PEM сертификата скопирован'));
 if (byId('btnCloseApps')) byId('btnCloseApps').addEventListener('click', closeApps);
 if (byId('appsSearch')) byId('appsSearch').addEventListener('input', renderAppsView);
 if (byId('appsCategory')) byId('appsCategory').addEventListener('change', renderAppsView);

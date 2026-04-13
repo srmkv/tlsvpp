@@ -22,6 +22,15 @@ install -Dm644 "${ROOT_DIR}/packaging/linux/${APP_ID}.metainfo.xml" "${PREFIX}/s
 install -Dm644 "${ROOT_DIR}/packaging/linux/assets/${APP_ID}.svg" "${PREFIX}/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
 install -Dm644 "${ROOT_DIR}/packaging/linux/assets/${APP_ID}.png" "${PREFIX}/share/icons/hicolor/256x256/apps/${APP_ID}.png"
 
-echo "[3/3] Готово"
+echo "[3/4] Настройка capability для работы без sudo"
+if command -v sudo >/dev/null 2>&1 && command -v setcap >/dev/null 2>&1; then
+  sudo setcap cap_net_admin,cap_net_raw+ep "${BIN}" || true
+else
+  echo "Пропускаю setcap: нужен sudo + setcap"
+fi
+
+echo "[4/4] Готово"
 echo "Запуск: ${PREFIX}/bin/${APP_NAME}"
 echo "При необходимости перелогиньтесь, чтобы пункт меню появился в системе."
+echo "Для работы TUN без sudo у бинарника должны быть capability:"
+echo "  getcap ${BIN}"

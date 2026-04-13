@@ -235,6 +235,86 @@ VLIB_CLI_COMMAND (tlsctrl_phase3b_listen_command, static) = {
 };
 
 static clib_error_t *
+tlsctrl_phase3b_perf_command_fn (vlib_main_t *vm, unformat_input_t *input,
+                                 vlib_cli_command_t *cmd)
+{
+  u32 seg_mb = 0, add_seg_mb = 0, rx_kb = 0, tx_kb = 0, prealloc = 0;
+  u32 max_live = 0, pause_thr = 0, resume_thr = 0, acc_rate = 0, req_kb = 0;
+  int rv;
+  (void) vm;
+  (void) cmd;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "segment-size-mb %u", &seg_mb))
+        ;
+      else if (unformat (input, "add-segment-size-mb %u", &add_seg_mb))
+        ;
+      else if (unformat (input, "rx-fifo-kb %u", &rx_kb))
+        ;
+      else if (unformat (input, "tx-fifo-kb %u", &tx_kb))
+        ;
+      else if (unformat (input, "prealloc-fifo-pairs %u", &prealloc))
+        ;
+      else if (unformat (input, "max-live-connections %u", &max_live))
+        ;
+      else if (unformat (input, "pause-threshold %u", &pause_thr))
+        ;
+      else if (unformat (input, "resume-threshold %u", &resume_thr))
+        ;
+      else if (unformat (input, "max-accepts-per-second %u", &acc_rate))
+        ;
+      else if (unformat (input, "max-request-kb %u", &req_kb))
+        ;
+      else
+        return clib_error_return (0, "unknown input: %U",
+                                  format_unformat_error, input);
+    }
+
+  if (!seg_mb || !add_seg_mb || !rx_kb || !tx_kb || !max_live || !pause_thr ||
+      !resume_thr || !acc_rate || !req_kb)
+    return clib_error_return (0,
+                              "usage: tlsctrl phase3b perf segment-size-mb <n> add-segment-size-mb <n> rx-fifo-kb <n> tx-fifo-kb <n> prealloc-fifo-pairs <n> max-live-connections <n> pause-threshold <n> resume-threshold <n> max-accepts-per-second <n> max-request-kb <n>");
+
+  rv = tlsctrl_phase3b_set_perf (((u64) seg_mb) << 20, ((u64) add_seg_mb) << 20,
+                                ((u64) rx_kb) << 10, ((u64) tx_kb) << 10,
+                                prealloc, max_live, pause_thr, resume_thr,
+                                acc_rate, req_kb << 10);
+  if (rv == -1)
+    return clib_error_return (0, "perf settings can be changed only before attach");
+  if (rv)
+    return clib_error_return (0, "perf settings failed: %d", rv);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (tlsctrl_phase3b_perf_command, static) = {
+  .path = "tlsctrl phase3b perf",
+  .short_help = "tlsctrl phase3b perf segment-size-mb <n> add-segment-size-mb <n> rx-fifo-kb <n> tx-fifo-kb <n> prealloc-fifo-pairs <n> max-live-connections <n> pause-threshold <n> resume-threshold <n> max-accepts-per-second <n> max-request-kb <n>",
+  .function = tlsctrl_phase3b_perf_command_fn,
+};
+
+static clib_error_t *
+show_tlsctrl_phase3b_listener_command_fn (vlib_main_t *vm, unformat_input_t *input,
+                                          vlib_cli_command_t *cmd)
+{
+  tlsctrl_main_t *tm = &tlsctrl_main;
+  (void) cmd;
+
+  if (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    return clib_error_return (0, "unknown input: %U", format_unformat_error,
+                              input);
+
+  vlib_cli_output (vm, "%U", format_tlsctrl_phase3b_listener, tm);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (show_tlsctrl_phase3b_listener_command, static) = {
+  .path = "show tlsctrl phase3b listener",
+  .short_help = "show tlsctrl phase3b listener",
+  .function = show_tlsctrl_phase3b_listener_command_fn,
+};
+
+static clib_error_t *
 tlsctrl_phase3b_client_command_fn (vlib_main_t *vm, unformat_input_t *input,
                                    vlib_cli_command_t *cmd)
 {

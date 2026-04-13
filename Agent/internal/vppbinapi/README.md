@@ -7,4 +7,4 @@ Expected package path after generation:
 - `internal/vppbinapi/tlsctrl`
 
 The `govpp` build-tag code imports:
-- `github.com/srmkv/tlsctrl-agent/internal/vppbinapi/tlsctrl`
+- `tlsctrl-agent/internal/vppbinapi/tlsctrl`

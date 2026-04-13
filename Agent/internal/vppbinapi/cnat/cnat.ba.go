@@ -14,13 +14,13 @@ package cnat
 
 import (
 	"strconv"
+	_ "tlsctrl-agent/internal/vppbinapi/ethernet_types"
+	_ "tlsctrl-agent/internal/vppbinapi/fib_types"
+	"tlsctrl-agent/internal/vppbinapi/interface_types"
+	"tlsctrl-agent/internal/vppbinapi/ip"
+	"tlsctrl-agent/internal/vppbinapi/ip_types"
+	_ "tlsctrl-agent/internal/vppbinapi/mfib_types"
 
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ethernet_types"
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/fib_types"
-	interface_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
-	ip "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip"
-	ip_types "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/ip_types"
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/mfib_types"
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

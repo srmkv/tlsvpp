@@ -22,6 +22,9 @@ show_tlsctrl_vpn_transport_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cl
       u64 open = s->session_open_count;
       u64 close = s->session_close_count;
       u64 reset = s->session_reset_count;
+      u64 reopen = s->reopen_count;
+      u64 stale = s->stale_reap_count;
+      u64 forced = s->forced_close_count;
 
       if (tlsctrl_vpn_dp_find_session (s->tunnel_id, &dp) == 0 && dp)
         {
@@ -29,10 +32,13 @@ show_tlsctrl_vpn_transport_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cl
           open = dp->session_open_count;
           close = dp->session_close_count;
           reset = dp->session_reset_count;
+          reopen = dp->reopen_count;
+          stale = dp->stale_reap_count;
+          forced = dp->forced_close_count;
         }
 
       vlib_cli_output (vm,
-                       "  tunnel=%llu tun=%s running=%u txp=%llu rxp=%llu txd=%llu rxd=%llu q=%llu err=%llu ip=%s gw=%s dns=%s mtu=%u mss=%u gen=%llu open=%llu close=%llu reset=%llu",
+                       "  tunnel=%llu tun=%s running=%u txp=%llu rxp=%llu txd=%llu rxd=%llu q=%llu err=%llu ip=%s gw=%s dns=%s mtu=%u mss=%u gen=%llu open=%llu close=%llu reset=%llu reopen=%llu stale=%llu forced=%llu owner=%u bind=%u wrong=%llu handoff=%llu drop=%llu",
                        (unsigned long long) s->tunnel_id,
                        s->tun_if_name ? (char *) s->tun_if_name : "-",
                        s->running,
@@ -49,7 +55,15 @@ show_tlsctrl_vpn_transport_fn (vlib_main_t *vm, unformat_input_t *input, vlib_cl
                        (unsigned long long) gen,
                        (unsigned long long) open,
                        (unsigned long long) close,
-                       (unsigned long long) reset);
+                       (unsigned long long) reset,
+                       (unsigned long long) reopen,
+                       (unsigned long long) stale,
+                       (unsigned long long) forced,
+                       dp ? dp->owner_thread_index : ~0u,
+                       dp ? dp->last_bind_thread_index : ~0u,
+                       (unsigned long long) (dp ? dp->wrong_worker_hits : 0),
+                       (unsigned long long) (dp ? dp->handoff_count : 0),
+                       (unsigned long long) (dp ? dp->handoff_drops : 0));
     }
   return 0;
 }

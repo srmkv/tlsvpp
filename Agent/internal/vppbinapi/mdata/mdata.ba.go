@@ -11,7 +11,8 @@
 package mdata
 
 import (
-	_ "github.com/srmkv/tlsctrl-agent/internal/vppbinapi/interface_types"
+	_ "tlsctrl-agent/internal/vppbinapi/interface_types"
+
 	api "go.fd.io/govpp/api"
 	codec "go.fd.io/govpp/codec"
 )

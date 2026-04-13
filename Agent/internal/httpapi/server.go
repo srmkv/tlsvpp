@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srmkv/tlsctrl-agent/internal/config"
-	"github.com/srmkv/tlsctrl-agent/internal/model"
-	"github.com/srmkv/tlsctrl-agent/internal/service"
+	"tlsctrl-agent/internal/config"
+	"tlsctrl-agent/internal/model"
+	"tlsctrl-agent/internal/service"
 )
 
 type statusRecorder struct {
@@ -121,6 +121,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/profiles", s.handleAdminProfiles)
 	mux.HandleFunc("/api/admin/profiles/delete", s.handleAdminDeleteProfile)
+	mux.HandleFunc("/api/admin/shards", s.handleAdminShards)
+	mux.HandleFunc("/api/admin/shards/delete", s.handleAdminDeleteShard)
+	mux.HandleFunc("/api/admin/shards/placement", s.handleAdminShardPlacement)
 	mux.HandleFunc("/api/admin/app-policies", s.handleAdminAppPolicies)
 	mux.HandleFunc("/api/admin/app-policies/delete", s.handleAdminDeleteAppPolicy)
 	mux.HandleFunc("/api/plugin/app-policy/resolve", s.handlePluginResolveAppPolicy)
@@ -419,6 +422,68 @@ func (s *Server) handleAdminDeleteProfile(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAdminShards(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		shards, err := s.svc.Shards(r.Context())
+		if err != nil {
+			writeError(w, "admin_shards_get", 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"shards": shards})
+	case http.MethodPost:
+		var req model.ShardNode
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, "admin_shards_post_decode", 400, err)
+			return
+		}
+		if err := s.svc.UpsertShard(r.Context(), req); err != nil {
+			writeError(w, "admin_shards_post", 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+func (s *Server) handleAdminDeleteShard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "admin_delete_shard_decode", 400, err)
+		return
+	}
+	if err := s.svc.DeleteShard(r.Context(), strings.TrimSpace(req.Name)); err != nil {
+		writeError(w, "admin_delete_shard", 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAdminShardPlacement(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	if username == "" {
+		http.Error(w, "username is required", 400)
+		return
+	}
+	view, err := s.svc.BundlePlacement(r.Context(), username)
+	if err != nil {
+		writeError(w, "admin_shard_placement", 400, err)
+		return
+	}
+	writeJSON(w, 200, view)
 }
 
 // Note: there is intentionally no /api/client/* on the agent anymore.

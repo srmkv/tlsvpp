@@ -51,6 +51,18 @@ tlsctrl_reset_counters (void)
   tm->http_4xx_responses = 0;
   tm->http_5xx_responses = 0;
   tm->parse_errors = 0;
+  tm->active_connections = 0;
+  tm->peak_active_connections = 0;
+  tm->overload_rejects = 0;
+  tm->rate_limit_rejects = 0;
+  tm->request_too_large_rejects = 0;
+  tm->listener_pause_count = 0;
+  tm->listener_resume_count = 0;
+  tm->listener_pause_requested = 0;
+  tm->listener_resume_requested = 0;
+  tm->listener_paused_by_overload = 0;
+  tm->accept_window_start_unix_ns = 0;
+  tm->accept_window_count = 0;
 }
 
 void
@@ -146,6 +158,37 @@ format_tlsctrl_phase3b_state (u8 *s, va_list *args)
               (unsigned long long) tm->http_5xx_responses);
   s = format (s, "parse-errors: %llu\n",
               (unsigned long long) tm->parse_errors);
+  s = format (s, "listener-segment-size: %llu\n",
+              (unsigned long long) tm->listener_segment_size);
+  s = format (s, "listener-add-segment-size: %llu\n",
+              (unsigned long long) tm->listener_add_segment_size);
+  s = format (s, "listener-rx-fifo-size: %llu\n",
+              (unsigned long long) tm->listener_rx_fifo_size);
+  s = format (s, "listener-tx-fifo-size: %llu\n",
+              (unsigned long long) tm->listener_tx_fifo_size);
+  s = format (s, "listener-prealloc-fifo-pairs: %llu\n",
+              (unsigned long long) tm->listener_prealloc_fifo_pairs);
+  s = format (s, "max-live-connections: %u\n", tm->max_live_connections);
+  s = format (s, "pause-threshold: %u\n", tm->pause_threshold);
+  s = format (s, "resume-threshold: %u\n", tm->resume_threshold);
+  s = format (s, "max-accepts-per-second: %u\n", tm->max_accepts_per_second);
+  s = format (s, "max-request-bytes: %u\n", tm->max_request_bytes);
+  s = format (s, "active-connections: %llu\n",
+              (unsigned long long) __atomic_load_n (&tm->active_connections, __ATOMIC_RELAXED));
+  s = format (s, "peak-active-connections: %llu\n",
+              (unsigned long long) tm->peak_active_connections);
+  s = format (s, "overload-rejects: %llu\n",
+              (unsigned long long) tm->overload_rejects);
+  s = format (s, "rate-limit-rejects: %llu\n",
+              (unsigned long long) tm->rate_limit_rejects);
+  s = format (s, "request-too-large-rejects: %llu\n",
+              (unsigned long long) tm->request_too_large_rejects);
+  s = format (s, "listener-pauses: %llu\n",
+              (unsigned long long) tm->listener_pause_count);
+  s = format (s, "listener-resumes: %llu\n",
+              (unsigned long long) tm->listener_resume_count);
+  s = format (s, "listener-paused-by-overload: %s\n",
+              tm->listener_paused_by_overload ? "yes" : "no");
   s = format (s, "known-users: %u\n",
               tm->clients ? pool_elts (tm->clients) : 0);
 
@@ -218,6 +261,73 @@ format_tlsctrl_phase3b_users (u8 *s, va_list *args)
 done:
   clib_spinlock_unlock_if_init (&tm->clients_lock);
   return s;
+}
+
+u8 *
+format_tlsctrl_phase3b_listener (u8 *s, va_list *args)
+{
+  tlsctrl_main_t *tm = va_arg (*args, tlsctrl_main_t *);
+  u64 active = __atomic_load_n (&tm->active_connections, __ATOMIC_RELAXED);
+
+  s = format (s,
+              "listening=%u paused=%u active=%llu peak=%llu accepted=%llu disconnect=%llu reset=%llu\n",
+              tm->listening, tm->listener_paused_by_overload,
+              (unsigned long long) active,
+              (unsigned long long) tm->peak_active_connections,
+              (unsigned long long) tm->accepted_connections,
+              (unsigned long long) tm->disconnected_connections,
+              (unsigned long long) tm->reset_connections);
+  s = format (s,
+              "segment=%llu add-segment=%llu rx-fifo=%llu tx-fifo=%llu prealloc=%llu\n",
+              (unsigned long long) tm->listener_segment_size,
+              (unsigned long long) tm->listener_add_segment_size,
+              (unsigned long long) tm->listener_rx_fifo_size,
+              (unsigned long long) tm->listener_tx_fifo_size,
+              (unsigned long long) tm->listener_prealloc_fifo_pairs);
+  s = format (s,
+              "limits live=%u pause=%u resume=%u accept-rate=%u req-bytes=%u\n",
+              tm->max_live_connections, tm->pause_threshold,
+              tm->resume_threshold, tm->max_accepts_per_second,
+              tm->max_request_bytes);
+  s = format (s,
+              "rejects overload=%llu rate=%llu request-too-large=%llu pauses=%llu resumes=%llu\n",
+              (unsigned long long) tm->overload_rejects,
+              (unsigned long long) tm->rate_limit_rejects,
+              (unsigned long long) tm->request_too_large_rejects,
+              (unsigned long long) tm->listener_pause_count,
+              (unsigned long long) tm->listener_resume_count);
+  return s;
+}
+
+int
+tlsctrl_phase3b_set_perf (u64 segment_size, u64 add_segment_size,
+                          u64 rx_fifo_size, u64 tx_fifo_size,
+                          u64 prealloc_fifo_pairs,
+                          u32 max_live_connections,
+                          u32 pause_threshold, u32 resume_threshold,
+                          u32 max_accepts_per_second,
+                          u32 max_request_bytes)
+{
+  tlsctrl_main_t *tm = &tlsctrl_main;
+
+  if (tm->attached)
+    return -1;
+  if (!segment_size || !add_segment_size || !rx_fifo_size || !tx_fifo_size)
+    return -2;
+  if (resume_threshold > pause_threshold)
+    return -3;
+
+  tm->listener_segment_size = segment_size;
+  tm->listener_add_segment_size = add_segment_size;
+  tm->listener_rx_fifo_size = rx_fifo_size;
+  tm->listener_tx_fifo_size = tx_fifo_size;
+  tm->listener_prealloc_fifo_pairs = prealloc_fifo_pairs;
+  tm->max_live_connections = max_live_connections;
+  tm->pause_threshold = pause_threshold;
+  tm->resume_threshold = resume_threshold;
+  tm->max_accepts_per_second = max_accepts_per_second;
+  tm->max_request_bytes = max_request_bytes;
+  return 0;
 }
 
 int
@@ -325,6 +435,16 @@ tlsctrl_init (vlib_main_t *vm)
   tm->listener_handle = SESSION_INVALID_HANDLE;
   tm->tls_engine = CRYPTO_ENGINE_OPENSSL;
   clib_spinlock_init (&tm->clients_lock);
+  tm->listener_segment_size = 1024ULL << 20;
+  tm->listener_add_segment_size = 1024ULL << 20;
+  tm->listener_rx_fifo_size = 128ULL << 10;
+  tm->listener_tx_fifo_size = 128ULL << 10;
+  tm->listener_prealloc_fifo_pairs = 8192;
+  tm->max_live_connections = 4096;
+  tm->pause_threshold = 3072;
+  tm->resume_threshold = 2048;
+  tm->max_accepts_per_second = 2048;
+  tm->max_request_bytes = 1024 << 10;
   tlsctrl_reset_counters ();
   tlsctrl_vpn_init (vm);
   tlsctrl_vpn_stage16_feature_sync ();

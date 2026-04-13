@@ -36,7 +36,7 @@ Section: net
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: Local Builder <local@example.invalid>
-Depends: libc6
+Depends: libc6, libcap2-bin
 Description: TLS Client Native
  Нативный Linux-клиент для mTLS-подключения с GUI.
 EOF
@@ -44,6 +44,9 @@ EOF
 cat > "${PKG_DIR}/DEBIAN/postinst" <<'EOF'
 #!/usr/bin/env bash
 set -e
+if command -v setcap >/dev/null 2>&1; then
+  setcap cap_net_admin,cap_net_raw+ep /opt/tlsclientnative/tlsclientnative || true
+fi
 update-desktop-database >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
 exit 0
@@ -53,6 +56,9 @@ chmod 755 "${PKG_DIR}/DEBIAN/postinst"
 cat > "${PKG_DIR}/DEBIAN/postrm" <<'EOF'
 #!/usr/bin/env bash
 set -e
+if command -v setcap >/dev/null 2>&1; then
+  setcap -r /opt/tlsclientnative/tlsclientnative >/dev/null 2>&1 || true
+fi
 update-desktop-database >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
 exit 0

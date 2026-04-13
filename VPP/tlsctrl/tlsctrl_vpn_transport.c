@@ -63,6 +63,9 @@ tlsctrl_vpn_transport_sync_lifecycle_from_dp (tlsctrl_vpn_transport_session_t *s
       s->session_close_count = dp->session_close_count;
       s->session_reset_count = dp->session_reset_count;
       s->connect_generation = dp->connect_generation;
+      s->reopen_count = dp->reopen_count;
+      s->stale_reap_count = dp->stale_reap_count;
+      s->forced_close_count = dp->forced_close_count;
       s->running = dp->running;
     }
 }
@@ -213,6 +216,28 @@ tlsctrl_vpn_transport_set_queue_depth (u64 tunnel_id, u32 depth)
   s->queue_depth = depth;
   tlsctrl_vpn_dp_set_queue_depth (tunnel_id, depth);
   tlsctrl_vpn_transport_sync_lifecycle_from_dp (s);
+  return 0;
+}
+
+
+int
+tlsctrl_vpn_transport_clear_runtime_counters (u64 tunnel_id, int preserve_lifecycle)
+{
+  tlsctrl_vpn_transport_session_t *s = 0;
+  if (tlsctrl_vpn_transport_ensure_session (tunnel_id, &s))
+    return -1;
+
+  tlsctrl_vpn_transport_reset_runtime (s);
+  if (!preserve_lifecycle)
+    {
+      s->session_open_count = 0;
+      s->session_close_count = 0;
+      s->session_reset_count = 0;
+      s->connect_generation = 0;
+      s->reopen_count = 0;
+      s->stale_reap_count = 0;
+      s->forced_close_count = 0;
+    }
   return 0;
 }
 

@@ -3,9 +3,9 @@
 package main
 
 import (
-	"github.com/srmkv/tlsctrl-agent/internal/config"
-	"github.com/srmkv/tlsctrl-agent/internal/vppclient"
-	"github.com/srmkv/tlsctrl-agent/internal/vppclient/govppbackend"
+	"tlsctrl-agent/internal/config"
+	"tlsctrl-agent/internal/vppclient"
+	"tlsctrl-agent/internal/vppclient/govppbackend"
 )
 
 func newGovPPBackend(cfg config.Config) (vppclient.Client, error) {

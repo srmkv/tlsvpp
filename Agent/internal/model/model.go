@@ -25,6 +25,31 @@ type User struct {
 	LastSeen   time.Time `json:"last_seen"`
 }
 
+type ShardNode struct {
+	Name            string    `json:"name"`
+	ClientPublicURL string    `json:"client_public_url"`
+	ServerName      string    `json:"server_name,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	Weight          int       `json:"weight,omitempty"`
+	CapacityHint    int       `json:"capacity_hint,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type ShardPlacement struct {
+	Username        string    `json:"username"`
+	ShardName       string    `json:"shard_name"`
+	ClientPublicURL string    `json:"client_public_url"`
+	ServerName      string    `json:"server_name,omitempty"`
+	AssignedAt      time.Time `json:"assigned_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type ShardNodeView struct {
+	ShardNode
+	AssignedUsers   int `json:"assigned_users"`
+	ConnectedUsers  int `json:"connected_users"`
+	EffectiveWeight int `json:"effective_weight"`
+}
 type VPNProfile struct {
 	Name          string    `json:"name"`
 	PoolName      string    `json:"pool_name,omitempty"`
