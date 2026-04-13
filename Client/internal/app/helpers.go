@@ -324,7 +324,7 @@ func (u *UI) renderSelfState() {
 		u.selfSource.SetText(source)
 		u.selfLastUpdate.SetText(lastUpdate)
 		if u.sidebarUptime != nil {
-			u.sidebarUptime.SetText("Аптайм системы: " + system.DetectSystemUptime())
+			u.sidebarUptime.SetText("Uptime: " + system.DetectSystemUptime())
 		}
 	})
 }
@@ -465,7 +465,7 @@ func (u *UI) refreshProcesses() {
 
 	markedRows, markErr := applyPolicyMarks(cfg, result)
 	if markErr != nil {
-		u.appendLog("Не удалось применить политики к списку приложений: " + markErr.Error())
+		u.appendLog("Не удалось применить политики к списку приложений: " + friendlyClientError(markErr))
 		markedRows = result
 	}
 
@@ -476,7 +476,7 @@ func (u *UI) refreshProcesses() {
 	if connected {
 		matchedApps, matchErr := client.CollectMatchedPolicyApps(cfg)
 		if matchErr != nil {
-			u.appendLog("Не удалось собрать приложения по политикам: " + matchErr.Error())
+			u.appendLog("Не удалось собрать приложения по политикам: " + friendlyClientError(matchErr))
 		} else if len(matchedApps) > 0 {
 			added := 0
 			for _, appName := range matchedApps {
@@ -515,10 +515,11 @@ func (u *UI) refreshProcesses() {
 			Apps:        reportItems,
 		}
 		if err := client.SendAppsReport(cfg, report); err != nil {
-			u.appendLog("Не удалось передать список приложений: " + err.Error())
-			if strings.Contains(strings.ToLower(err.Error()), "запрещенное приложение") {
+			msg := friendlyClientError(err)
+			u.appendLog("Не удалось передать список приложений: " + msg)
+			if strings.Contains(strings.ToLower(msg), "запрещенное приложение") || strings.Contains(strings.ToLower(msg), "запрещённое приложение") {
 				go client.Disconnect(cfg)
-				u.markDisconnectedLocalReason(err.Error(), "error")
+				u.markDisconnectedLocalReason(msg, "error")
 			}
 		} else {
 			u.appendLog("Список приложений передан")
@@ -552,7 +553,7 @@ func (u *UI) sendAppsNow() {
 	}
 	matchedApps, matchErr := client.CollectMatchedPolicyApps(cfg)
 	if matchErr != nil {
-		u.appendLog("Не удалось собрать приложения по политикам: " + matchErr.Error())
+		u.appendLog("Не удалось собрать приложения по политикам: " + friendlyClientError(matchErr))
 	} else if len(matchedApps) > 0 {
 		for _, appName := range matchedApps {
 			name := strings.TrimSpace(appName)
@@ -579,10 +580,11 @@ func (u *UI) sendAppsNow() {
 		Apps:        reportItems,
 	}
 	if err := client.SendAppsReport(cfg, report); err != nil {
-		u.appendLog("Не удалось передать список приложений: " + err.Error())
-		if strings.Contains(strings.ToLower(err.Error()), "запрещенное приложение") {
+		msg := friendlyClientError(err)
+		u.appendLog("Не удалось передать список приложений: " + msg)
+		if strings.Contains(strings.ToLower(msg), "запрещенное приложение") || strings.Contains(strings.ToLower(msg), "запрещённое приложение") {
 			go client.Disconnect(cfg)
-			u.markDisconnectedLocalReason(err.Error(), "error")
+			u.markDisconnectedLocalReason(msg, "error")
 		}
 		return
 	}

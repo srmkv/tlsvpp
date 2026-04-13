@@ -53,6 +53,8 @@ type UI struct {
 	monitorFailures        int
 	lastMonitorError       string
 	lastCommandError       string
+	adminMode              bool
+	currentPage            string
 
 	serverURL      *widget.Entry
 	serverName     *widget.Entry
@@ -115,6 +117,11 @@ type UI struct {
 	vpnRoutes         *widget.Entry
 	vpnDataplaneStats *widget.Entry
 
+	modeLabel     *widget.Label
+	modeButton    *widget.Button
+	navList       *widget.List
+	adminSections []fyne.CanvasObject
+
 	pages     map[string]fyne.CanvasObject
 	pageNames []string
 }
@@ -123,9 +130,124 @@ func NewUI(app fyne.App, window fyne.Window, cfg state.Config) *UI {
 	return &UI{app: app, window: window, cfg: cfg, stopCh: make(chan struct{}), pageNames: []string{"Стартовая", "VPN", "Конфигурация", "Приложения", "Журнал"}, seenCmdIDs: make(map[string]time.Time)}
 }
 
+const adminModePassword = "s-terra"
+
+func (u *UI) visiblePageNames() []string {
+	if u == nil {
+		return nil
+	}
+	u.mu.RLock()
+	admin := u.adminMode
+	u.mu.RUnlock()
+	if admin {
+		return append([]string(nil), u.pageNames...)
+	}
+	return []string{"Стартовая", "Конфигурация", "Журнал"}
+}
+
+func (u *UI) canAccessPage(name string) bool {
+	for _, item := range u.visiblePageNames() {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *UI) setMode(admin bool) {
+	u.mu.Lock()
+	u.adminMode = admin
+	current := u.currentPage
+	u.mu.Unlock()
+	if !u.canAccessPage(current) {
+		current = "Стартовая"
+	}
+	if u.modeLabel != nil {
+		if admin {
+			fyne.Do(func() { u.modeLabel.SetText("Режим: администратор") })
+		} else {
+			fyne.Do(func() { u.modeLabel.SetText("Режим: пользователь") })
+		}
+	}
+	if u.modeButton != nil {
+		fyne.Do(func() {
+			if admin {
+				u.modeButton.SetText("Режим пользователя")
+			} else {
+				u.modeButton.SetText("Режим администратора")
+			}
+		})
+	}
+	for _, obj := range u.adminSections {
+		if obj == nil {
+			continue
+		}
+		if admin {
+			obj.Show()
+		} else {
+			obj.Hide()
+		}
+	}
+	if u.navList != nil {
+		fyne.Do(func() {
+			u.navList.Refresh()
+			pages := u.visiblePageNames()
+			idx := 0
+			for i, page := range pages {
+				if page == current {
+					idx = i
+					break
+				}
+			}
+			u.navList.Select(idx)
+		})
+	}
+	u.setupMenus()
+	u.showPage(current)
+}
+
+func (u *UI) switchToUserMode() {
+	u.mu.RLock()
+	wasAdmin := u.adminMode
+	u.mu.RUnlock()
+	u.setMode(false)
+	if wasAdmin {
+		u.setStatus("Включён пользовательский режим")
+		u.appendLog("Включён пользовательский режим")
+	}
+}
+
+func (u *UI) promptAdminMode() {
+	u.mu.RLock()
+	admin := u.adminMode
+	u.mu.RUnlock()
+	if admin {
+		u.switchToUserMode()
+		return
+	}
+	pass := widget.NewPasswordEntry()
+	pass.SetPlaceHolder("Введите пароль")
+	info := widget.NewLabel("Для расширенного режима введите пароль администратора.")
+	info.Wrapping = fyne.TextWrapWord
+	content := container.NewVBox(info, pass)
+	d := dialog.NewCustomConfirm("Режим администратора", "Включить", "Отмена", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		if strings.TrimSpace(pass.Text) != adminModePassword {
+			dialog.ShowInformation("Неверный пароль", "Пароль администратора указан неверно.", u.window)
+			u.appendLog("Неудачная попытка входа в режим администратора")
+			return
+		}
+		u.setMode(true)
+		u.setStatus("Включён режим администратора")
+		u.appendLog("Включён режим администратора")
+	}, u.window)
+	d.Show()
+}
+
 func (u *UI) Build() {
 	u.initWidgets()
-	u.setupMenus()
 	u.setupTray()
 	startPage := u.wrapPage(u.buildStartPage())
 	vpnPage := u.wrapPage(u.buildVPNPage())
@@ -134,23 +256,32 @@ func (u *UI) Build() {
 	journalPage := u.wrapPage(u.buildJournalPage())
 	u.pages = map[string]fyne.CanvasObject{"Стартовая": startPage, "VPN": vpnPage, "Конфигурация": configPage, "Приложения": appsPage, "Журнал": journalPage}
 	contentStack := container.NewMax(startPage, vpnPage, configPage, appsPage, journalPage)
-	u.showPage("Стартовая")
 
-	navList := widget.NewList(
-		func() int { return len(u.pageNames) },
+	u.navList = widget.NewList(
+		func() int { return len(u.visiblePageNames()) },
 		func() fyne.CanvasObject { return widget.NewLabel("Template") },
-		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(u.pageNames[i]) },
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			pages := u.visiblePageNames()
+			if i >= 0 && i < len(pages) {
+				o.(*widget.Label).SetText(pages[i])
+			}
+		},
 	)
-	navList.OnSelected = func(id widget.ListItemID) {
-		if id >= 0 && id < len(u.pageNames) {
-			u.showPage(u.pageNames[id])
+	u.navList.OnSelected = func(id widget.ListItemID) {
+		pages := u.visiblePageNames()
+		if id >= 0 && id < len(pages) {
+			u.showPage(pages[id])
 		}
 	}
-	navList.Select(0)
+	u.navList.Select(0)
 
-	sidebarTop := container.NewVBox(widget.NewLabelWithStyle("TLS Client", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewLabel("Linux"), widget.NewSeparator())
+	sidebarTop := container.NewVBox(
+		widget.NewLabelWithStyle("TLS Client", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		u.modeButton,
+		widget.NewSeparator(),
+	)
 	sidebarBottom := container.NewVBox(widget.NewSeparator(), u.sidebarStatus, u.sidebarUptime)
-	navWrap := container.NewVScroll(navList)
+	navWrap := container.NewVScroll(u.navList)
 	navWrap.SetMinSize(fyne.NewSize(180, 280))
 	sidebarInner := container.NewBorder(sidebarTop, sidebarBottom, nil, nil, navWrap)
 	sidebar := widget.NewCard("", "", sidebarInner)
@@ -161,6 +292,7 @@ func (u *UI) Build() {
 	split := container.NewHSplit(sidebar, mainAreaInner)
 	split.Offset = 0.22
 	u.window.SetContent(split)
+	u.setMode(false)
 	u.renderSelfState()
 	u.refreshVPNDetails()
 	u.updateConnectionUI(false, "")
@@ -211,7 +343,7 @@ func (u *UI) initWidgets() {
 	u.statusValue = widget.NewLabel("выключено")
 	u.headerSection = widget.NewLabelWithStyle("Стартовая", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.sidebarStatus = widget.NewLabel("Статус: выключено")
-	u.sidebarUptime = widget.NewLabel("Аптайм системы: " + system.DetectSystemUptime())
+	u.sidebarUptime = widget.NewLabel("Uptime: " + system.DetectSystemUptime())
 	u.selfUsername = widget.NewLabel(empty(u.cfg.Username))
 	osType, osVersion := system.DetectOSInfo()
 	u.selfSystemUser = widget.NewLabel(empty(system.DetectSystemUser()))
@@ -289,16 +421,24 @@ func (u *UI) initWidgets() {
 	u.processCategory.OnChanged = func(string) { u.applyProcessFilter() }
 
 	u.processCount = widget.NewLabel("Приложений: 0")
+	u.modeLabel = widget.NewLabel("Режим: пользователь")
+	u.modeButton = widget.NewButton("Режим администратора", u.promptAdminMode)
 	u.connectButton = widget.NewButtonWithIcon("Подключить", theme.MediaPlayIcon(), u.toggleConnect)
 	u.connectButton.Importance = widget.SuccessImportance
 	u.autoButton = widget.NewButtonWithIcon("Автообновление", theme.ViewRefreshIcon(), u.toggleAutoRefresh)
 }
 
 func (u *UI) setupMenus() {
+	sectionItems := []*fyne.MenuItem{}
+	for _, page := range u.visiblePageNames() {
+		pageName := page
+		sectionItems = append(sectionItems, fyne.NewMenuItem(pageName, func() { u.showPage(pageName) }))
+	}
 	mainMenu := fyne.NewMainMenu(
 		fyne.NewMenu("Файл", fyne.NewMenuItem("Загрузить конфигурацию", func() { u.loadBundle() }), fyne.NewMenuItemSeparator(), fyne.NewMenuItem("Скрыть окно", func() { u.window.Hide() }), fyne.NewMenuItem("Выход", func() { u.quitApp() })),
 		fyne.NewMenu("Подключение", fyne.NewMenuItem("Подключить / отключить", func() { u.toggleConnect() }), fyne.NewMenuItem("Автообновление", func() { u.toggleAutoRefresh() })),
-		fyne.NewMenu("Разделы", fyne.NewMenuItem("Стартовая", func() { u.showPage("Стартовая") }), fyne.NewMenuItem("VPN", func() { u.showPage("VPN") }), fyne.NewMenuItem("Конфигурация", func() { u.showPage("Конфигурация") }), fyne.NewMenuItem("Приложения", func() { u.showPage("Приложения") }), fyne.NewMenuItem("Журнал", func() { u.showPage("Журнал") })),
+		fyne.NewMenu("Режим", fyne.NewMenuItem("Пользовательский режим", func() { u.switchToUserMode() }), fyne.NewMenuItem("Режим администратора", func() { u.promptAdminMode() })),
+		fyne.NewMenu("Разделы", sectionItems...),
 	)
 	u.window.SetMainMenu(mainMenu)
 }
@@ -338,6 +478,12 @@ func (u *UI) wrapPage(obj fyne.CanvasObject) fyne.CanvasObject {
 }
 
 func (u *UI) showPage(name string) {
+	if !u.canAccessPage(name) {
+		name = "Стартовая"
+	}
+	u.mu.Lock()
+	u.currentPage = name
+	u.mu.Unlock()
 	for pageName, obj := range u.pages {
 		if pageName == name {
 			obj.Show()
@@ -441,7 +587,8 @@ func (u *UI) buildConfigPage() fyne.CanvasObject {
 	left := widget.NewCard("Основное", "", mainForm)
 	right := widget.NewCard("Дополнительно", "", advancedForm)
 	actions := widget.NewCard("Действия", "", container.NewHBox(loadBtn, saveBtn))
-	note := widget.NewCard("Описание", "", widget.NewLabel("Адрес сервера — адрес TLS API.\nУчетная запись — имя клиента из конфигурации и сертификата.\nИмя сервера — имя сертификата сервера.\nПуть клиентов — endpoint списка клиентов.\nПуть команд и путь отчета приложений используются сервером для управления списком приложений."))
+	note := widget.NewCard("Описание", "", widget.NewLabel("Адрес сервера — адрес TLS API.\nУчетная запись — имя клиента из конфигурации и сертификата.\nИмя сервера — имя сертификата сервера.\nПуть clients — endpoint VPN bind.\nДополнительные сетевые пути доступны только в режиме администратора."))
+	u.adminSections = append(u.adminSections, right)
 	return container.NewVBox(container.NewGridWithColumns(2, left, right), actions, note)
 }
 

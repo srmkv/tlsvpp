@@ -116,6 +116,160 @@ var (
 	dataplaneLogger func(string)
 )
 
+type apiErrorEnvelope struct {
+	Message string `json:"message"`
+	Error   string `json:"error"`
+	Detail  string `json:"detail"`
+	Reason  string `json:"reason"`
+	Code    string `json:"code"`
+}
+
+func extractAPIErrorMessage(body []byte) string {
+	body = trimJSONBody(body)
+	if msg := extractLooseDecisionMessage(body); msg != "" {
+		return msg
+	}
+	var env apiErrorEnvelope
+	if err := json.Unmarshal(body, &env); err == nil {
+		for _, v := range []string{env.Message, env.Error, env.Detail, env.Reason, env.Code} {
+			if clean := strings.TrimSpace(v); clean != "" {
+				return clean
+			}
+		}
+	}
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		return ""
+	}
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+	return msg
+}
+
+func readableHTTPError(op string, statusCode int, status string, body []byte, fallback string) error {
+	msg := strings.TrimSpace(extractAPIErrorMessage(body))
+	if msg == "" {
+		msg = strings.TrimSpace(fallback)
+	}
+	switch statusCode {
+	case http.StatusBadRequest:
+		if msg == "" {
+			msg = "Некорректный запрос клиента"
+		}
+	case http.StatusUnauthorized:
+		if msg == "" {
+			msg = "Сервер отклонил клиентский сертификат или учётная запись отключена"
+		}
+	case http.StatusForbidden:
+		if msg == "" {
+			msg = "Доступ запрещён сервером"
+		}
+	case http.StatusNotFound:
+		if msg == "" {
+			msg = "На сервере не найден нужный endpoint"
+		}
+	case http.StatusConflict:
+		if msg == "" {
+			msg = "Конфликт состояния на сервере"
+		}
+	case http.StatusLocked:
+		if msg == "" {
+			msg = "Подключение заблокировано политикой безопасности"
+		}
+	case http.StatusTooManyRequests:
+		if msg == "" {
+			msg = "Сервер временно ограничил число запросов"
+		}
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		if msg == "" {
+			msg = "Сервер временно недоступен"
+		}
+	default:
+		if statusCode >= 500 && msg == "" {
+			msg = "Внутренняя ошибка сервера"
+		}
+	}
+	if msg == "" {
+		msg = strings.TrimSpace(status)
+	}
+	if op = strings.TrimSpace(op); op != "" {
+		return fmt.Errorf("%s: %s", op, msg)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+func readableRequestError(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := HumanizeError(err)
+	if op = strings.TrimSpace(op); op != "" {
+		lowerOp := strings.ToLower(op)
+		lowerMsg := strings.ToLower(msg)
+		if strings.Contains(lowerMsg, lowerOp) || strings.HasPrefix(lowerMsg, op+":") {
+			return fmt.Errorf("%s", msg)
+		}
+		return fmt.Errorf("%s: %s", op, msg)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+func HumanizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "Неизвестная ошибка"
+	}
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "unsupported protocol scheme"):
+		return "Некорректно задан адрес сервера"
+	case strings.Contains(lower, "certificate signed by unknown authority") || strings.Contains(lower, "unknown authority"):
+		return "Не удалось проверить сертификат сервера"
+	case strings.Contains(lower, "certificate is valid for") || strings.Contains(lower, "hostname") && strings.Contains(lower, "certificate"):
+		return "Имя сервера не совпадает с сертификатом. Проверьте поле Server Name"
+	case strings.Contains(lower, "remote error: tls: bad certificate"):
+		return "Сервер отклонил клиентский сертификат"
+	case strings.Contains(lower, "certificate required"):
+		return "Сервер требует клиентский сертификат"
+	case strings.Contains(lower, "connection refused"):
+		return "Сервер недоступен или TLS listener не запущен"
+	case strings.Contains(lower, "no such host"):
+		return "Не удалось найти адрес сервера"
+	case strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "timeout"):
+		return "Сервер не ответил вовремя"
+	case strings.Contains(lower, "eof"):
+		return "Соединение было закрыто сервером"
+	case strings.Contains(lower, "not connected"):
+		return "Соединение не установлено"
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return "Не удалось проверить сертификат сервера"
+	}
+	var hostnameErr x509.HostnameError
+	if errors.As(err, &hostnameErr) {
+		return "Имя сервера не совпадает с сертификатом. Проверьте поле Server Name"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "Сервер не ответил вовремя"
+	}
+	if ue := new(url.Error); errors.As(err, &ue) && ue != nil {
+		if ue.Timeout() {
+			return "Сервер не ответил вовремя"
+		}
+		inner := strings.TrimSpace(ue.Err.Error())
+		if inner != "" && !strings.EqualFold(inner, msg) {
+			return HumanizeError(ue.Err)
+		}
+	}
+	return msg
+}
+
 type vpnBindResponse struct {
 	OK            bool   `json:"ok"`
 	TunnelID      uint64 `json:"tunnel_id"`
@@ -191,7 +345,7 @@ func detectInterfacesModel() []model.NetworkInterface {
 func checkAppPolicies(cfg state.Config, httpClient *http.Client) error {
 	decision, err := evaluateAppPolicies(cfg, httpClient)
 	if err != nil {
-		return err
+		return readableRequestError("Проверка политик", err)
 	}
 	if decision.Allow {
 		return nil
@@ -324,7 +478,7 @@ func evaluateAppPolicies(cfg state.Config, httpClient *http.Client) (model.AppPo
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf(extractDecisionMessage(body, "Ошибка проверки политики"))
+			lastErr = readableHTTPError("Проверка политик", resp.StatusCode, resp.Status, body, "Ошибка проверки политики")
 			continue
 		}
 		var out model.AppPolicyDecision
@@ -383,7 +537,7 @@ func fetchAppPolicies(cfg state.Config, httpClient *http.Client) ([]model.AppPol
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf(extractDecisionMessage(body, "Ошибка проверки политики"))
+			lastErr = readableHTTPError("Проверка политик", resp.StatusCode, resp.Status, body, "Ошибка проверки политики")
 			continue
 		}
 		var out model.AppPolicyResolveResponse
@@ -598,7 +752,7 @@ func reportPolicyDecisionViolation(cfg state.Config, httpClient *http.Client, de
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return readableRequestError("Отправка нарушения политики", err)
 	}
 	for _, path := range []string{policyViolationDefaultPath, policyViolationFallbackPath} {
 		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
@@ -631,7 +785,7 @@ func reportPolicyViolation(cfg state.Config, httpClient *http.Client, policy mod
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return readableRequestError("Отправка нарушения политики", err)
 	}
 	for _, path := range []string{policyViolationDefaultPath, policyViolationFallbackPath} {
 		req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, path), bytes.NewReader(bodyBytes))
@@ -732,29 +886,26 @@ func connectVPNLocked(cfg state.Config) (model.ClientSession, error) {
 	urlValue := joinURL(cfg.ServerURL, cfg.ClientsPath)
 	req, err := http.NewRequest(http.MethodPost, urlValue, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return model.ClientSession{}, fmt.Errorf("build vpn-bind request: %w", err)
+		return model.ClientSession{}, readableRequestError("Подключение", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyClientHeaders(req)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return model.ClientSession{}, fmt.Errorf("vpn-bind request failed: %w", err)
+		return model.ClientSession{}, readableRequestError("Подключение", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if len(body) > 0 {
-			return model.ClientSession{}, fmt.Errorf("unexpected status: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		}
-		return model.ClientSession{}, fmt.Errorf("unexpected status: %s", resp.Status)
+		return model.ClientSession{}, readableHTTPError("Подключение", resp.StatusCode, resp.Status, body, "Сервер отклонил подключение")
 	}
 	var reply vpnBindResponse
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
-		return model.ClientSession{}, fmt.Errorf("decode vpn-bind response: %w", err)
+		return model.ClientSession{}, fmt.Errorf("Подключение: не удалось разобрать ответ сервера")
 	}
 	if !reply.OK {
-		return model.ClientSession{}, fmt.Errorf("vpn-bind failed")
+		return model.ClientSession{}, fmt.Errorf("Подключение: сервер не подтвердил создание VPN-сессии")
 	}
 
 	applier := newRuntimeApplier()
@@ -768,7 +919,7 @@ func connectVPNLocked(cfg state.Config) (model.ClientSession, error) {
 		MTU:           int(reply.MTU),
 	}); err != nil {
 		tr.CloseIdleConnections()
-		return model.ClientSession{}, fmt.Errorf("apply linux runtime: %w", err)
+		return model.ClientSession{}, fmt.Errorf("Подключение: не удалось настроить локальный VPN-интерфейс: %s", HumanizeError(err))
 	}
 
 	osType, osVersion := system.DetectOSInfo()
@@ -826,7 +977,7 @@ func FetchCommands(cfg state.Config) ([]model.Command, error) { return nil, nil 
 func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 	httpClient, _, err := newPersistentMTLSHTTPClient(cfg, 10*time.Second)
 	if err != nil {
-		return err
+		return readableRequestError("Передача списка приложений", err)
 	}
 	payload := struct {
 		Username    string                `json:"username"`
@@ -856,14 +1007,14 @@ func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 		urlValue := joinURL(cfg.ServerURL, path)
 		req, err := http.NewRequest(http.MethodPost, urlValue, bytes.NewReader(bodyBytes))
 		if err != nil {
-			lastErr = fmt.Errorf("build apps report request: %w", err)
+			lastErr = readableRequestError("Передача списка приложений", err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 		applyClientHeaders(req)
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("apps report request failed: %w", err)
+			lastErr = readableRequestError("Передача списка приложений", err)
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -883,13 +1034,13 @@ func SendAppsReport(cfg state.Config, report model.AppsReport) error {
 				break
 			}
 		}
-		lastErr = fmt.Errorf(extractDecisionMessage(body, "Сервер отклонил список приложений"))
+		lastErr = readableHTTPError("Передача списка приложений", resp.StatusCode, resp.Status, body, "Сервер отклонил список приложений")
 		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 			break
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("apps report path is not configured")
+		lastErr = fmt.Errorf("Передача списка приложений: путь endpoint не настроен")
 	}
 	return lastErr
 }
@@ -1014,22 +1165,23 @@ func sendDisconnectNoticeWithClient(cfg state.Config, s model.ClientSession, htt
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return readableRequestError("Отключение", err)
 	}
 	req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, HeartbeatPath), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return err
+		return readableRequestError("Отключение", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyClientHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return readableRequestError("Отключение", err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 256))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("disconnect heartbeat status: %s", resp.Status)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return readableHTTPError("Отключение", resp.StatusCode, resp.Status, body, "Сервер отклонил отключение")
 	}
 	return nil
 }
@@ -1059,21 +1211,18 @@ func sendHeartbeat(cfg state.Config, s model.ClientSession) error {
 	}
 	req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, HeartbeatPath), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("build heartbeat request: %w", err)
+		return readableRequestError("Heartbeat", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyClientHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("heartbeat request failed: %w", err)
+		return readableRequestError("Heartbeat", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if len(body) > 0 {
-			return fmt.Errorf("heartbeat status: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		}
-		return fmt.Errorf("heartbeat status: %s", resp.Status)
+		return readableHTTPError("Heartbeat", resp.StatusCode, resp.Status, body, "Сервер отклонил heartbeat")
 	}
 	return nil
 }
@@ -1496,25 +1645,22 @@ func postFrame(ctx context.Context, httpClient *http.Client, s model.ClientSessi
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return readableRequestError("Передача VPN-кадра", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(strings.TrimRight(strings.TrimSpace(baseURL), "/"), VPNFramePath), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return err
+		return readableRequestError("Передача VPN-кадра", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyClientHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return readableRequestError("Передача VPN-кадра", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if len(body) > 0 {
-			return fmt.Errorf("vpn-frame status: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		}
-		return fmt.Errorf("vpn-frame status: %s", resp.Status)
+		return readableHTTPError("Передача VPN-кадра", resp.StatusCode, resp.Status, body, "Сервер отклонил VPN-кадр")
 	}
 	dataplaneCtrs.FramePosts.Add(1)
 	return nil
@@ -1554,14 +1700,15 @@ func pollFrame(ctx context.Context, httpClient *http.Client, s model.ClientSessi
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return "", fmt.Errorf("vpn-poll status: %s", resp.Status)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", readableHTTPError("Получение VPN-кадра", resp.StatusCode, resp.Status, body, "Сервер отклонил poll-запрос")
 	}
 	var out vpnFrameResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", err
 	}
 	if !out.OK {
-		return "", fmt.Errorf("vpn-poll failed")
+		return "", fmt.Errorf("Получение VPN-кадра: сервер вернул неуспешный ответ")
 	}
 	return out.FrameHex, nil
 }

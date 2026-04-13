@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -86,18 +87,19 @@ func (u *UI) connectOnce() {
 	go func() {
 		session, err := client.ConnectVPN(u.cfg)
 		if err != nil {
+			msg := friendlyClientError(err)
 			u.mu.Lock()
 			u.reconnecting = false
 			u.mu.Unlock()
-			u.setStatus("Ошибка подключения: " + err.Error())
-			u.appendLog("Ошибка подключения: " + err.Error())
+			u.setStatus("Ошибка подключения: " + msg)
+			u.appendLog("Ошибка подключения: " + msg)
 			u.showConnectErrorDialog(err)
 			if client.IsUnauthorizedError(err) {
 				u.markDisconnectedLocalReason("сертификат отклонён сервером: требуется новая конфигурация", "disconnected")
 			} else if client.IsBackendUnavailableError(err) {
 				u.markDisconnectedLocalReason("backend недоступен: VPP выключен или недоступен", "disconnected")
 			} else {
-				u.markDisconnectedLocalReason("ошибка подключения: "+err.Error(), "error")
+				u.markDisconnectedLocalReason("ошибка подключения: "+msg, "error")
 			}
 			return
 		}
@@ -139,6 +141,13 @@ func extractPolicyMessageLoose(msg string) string {
 		}
 	}
 	return ""
+}
+
+func friendlyClientError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(client.HumanizeError(err))
 }
 
 func cleanConnectErrorMessage(err error) string {
@@ -204,7 +213,7 @@ func cleanConnectErrorMessage(err error) string {
 	if strings.HasPrefix(strings.TrimSpace(msg), "{") || strings.Contains(msg, "{\"") {
 		return "У вас обнаружено запрещенное приложение"
 	}
-	return msg
+	return client.HumanizeError(errors.New(msg))
 }
 
 func extractJSONTail(msg string) string {
@@ -260,9 +269,10 @@ func (u *UI) disconnectOnce() {
 		u.lastMonitorError = ""
 		u.mu.Unlock()
 		if err != nil {
-			u.setStatus("Ошибка отключения: " + err.Error())
-			u.appendLog("Ошибка отключения: " + err.Error())
-			u.markDisconnectedLocalReason("ошибка отключения: "+err.Error(), "error")
+			msg := friendlyClientError(err)
+			u.setStatus("Ошибка отключения: " + msg)
+			u.appendLog("Ошибка отключения: " + msg)
+			u.markDisconnectedLocalReason("ошибка отключения: "+msg, "error")
 			return
 		}
 		u.markDisconnectedLocalReason("ручное отключение", "disconnected")
@@ -351,7 +361,7 @@ func (u *UI) monitorLoop() {
 func (u *UI) processPendingCommands(cfg state.Config) error { return nil }
 
 func (u *UI) handleMonitorFailure(err error) {
-	reason := err.Error()
+	reason := friendlyClientError(err)
 	u.mu.Lock()
 	u.monitorFailures++
 	count := u.monitorFailures
@@ -384,6 +394,7 @@ func (u *UI) startReconnect(cfg state.Config, reason string) {
 	go func() {
 		session, err := client.ReconnectVPN(cfg, 3, time.Second)
 		if err != nil {
+			msg := friendlyClientError(err)
 			u.mu.Lock()
 			manualStop := u.manualDisconnectWanted
 			u.reconnecting = false
@@ -395,8 +406,8 @@ func (u *UI) startReconnect(cfg state.Config, reason string) {
 				u.markDisconnectedLocalReason("ручное отключение", "disconnected")
 				return
 			}
-			u.appendLog("Автовосстановление не удалось: " + err.Error())
-			u.markDisconnectedLocalReason("автовосстановление не удалось: "+err.Error()+"; исходная причина: "+reason, "error")
+			u.appendLog("Автовосстановление не удалось: " + msg)
+			u.markDisconnectedLocalReason("автовосстановление не удалось: "+msg+"; исходная причина: "+reason, "error")
 			return
 		}
 		u.mu.RLock()

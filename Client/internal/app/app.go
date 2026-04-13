@@ -25,7 +25,7 @@ func Run() error {
 	}
 	a := fyneapp.NewWithID("io.srmkv.tlsclientnative")
 	a.Settings().SetTheme(newClientTheme(theme.DefaultTheme()))
-	w := a.NewWindow("TLS Client Linux")
+	w := a.NewWindow("TLS Client")
 	w.Resize(fyne.NewSize(windowW, windowH))
 	w.SetFixedSize(false)
 	ui := NewUI(a, w, cfg)
