@@ -458,6 +458,42 @@ done:
   return rv;
 }
 
+static void tlsctrl_build_response (tlsctrl_conn_t *conn, int code,
+                                     const char *status, const char *ctype,
+                                     u8 *payload);
+
+static int
+tlsctrl_json_contains_true (u8 *body, const char *needle)
+{
+  return body && needle && strstr ((char *) body, needle) != 0;
+}
+
+static void
+tlsctrl_build_vpn_bind_ok_response (tlsctrl_conn_t *conn, u32 tunnel_id,
+                                    u8 *assigned_ip, u8 *gateway,
+                                    u8 *dns_servers, u8 *include_routes,
+                                    u8 *exclude_routes, u8 full_tunnel,
+                                    u32 mtu, u32 mss, u32 lease_seconds)
+{
+  u8 *json = 0;
+  json = format (
+    0,
+    "{\"ok\":true,\"tunnel_id\":%u,"
+    "\"assigned_ip\":\"%s\",\"gateway\":\"%s\",\"dns_servers\":\"%s\","
+    "\"include_routes\":\"%s\",\"exclude_routes\":\"%s\","
+    "\"full_tunnel\":%s,\"mtu\":%u,\"mss\":%u,\"lease_seconds\":%u}",
+    tunnel_id,
+    assigned_ip ? (char *) assigned_ip : "",
+    gateway ? (char *) gateway : "",
+    dns_servers ? (char *) dns_servers : "",
+    include_routes ? (char *) include_routes : "",
+    exclude_routes ? (char *) exclude_routes : "",
+    full_tunnel ? "true" : "false",
+    mtu, mss, lease_seconds);
+  tlsctrl_build_response (conn, 200, "OK", "application/json", json);
+  vec_free (json);
+}
+
 static u32
 tlsctrl_find_header_end (u8 *data)
 {
@@ -2019,6 +2055,127 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
       vec_free (proxy_resp);
     }
   else if (!strcmp ((char *) method, "POST") &&
+           !strncmp ((char *) target, "/api/client/2fa/resend", 23))
+    {
+      int proxy_status = 502;
+      u8 *proxy_resp = 0;
+      if (tlsctrl_http_post_agent_json ("/api/plugin/2fa/resend",
+                                        body, &proxy_status, &proxy_resp) != 0)
+        {
+          tlsctrl_build_json_response (conn, 502, "Bad Gateway",
+                                       "{\"ok\":false,\"error\":\"2fa resend failed\"}");
+          vec_free (proxy_resp);
+          goto done;
+        }
+      tlsctrl_build_response (conn, proxy_status,
+                              tlsctrl_http_status_text (proxy_status),
+                              "application/json", proxy_resp);
+      vec_free (proxy_resp);
+    }
+  else if (!strcmp ((char *) method, "POST") &&
+           !strncmp ((char *) target, "/api/client/2fa/verify", 23))
+    {
+      int proxy_status = 502;
+      u8 *proxy_req = 0;
+      u8 *proxy_resp = 0;
+      username = tlsctrl_json_extract_string (body, "username");
+      profile = tlsctrl_json_extract_string (body, "profile");
+      client_ip = tlsctrl_json_extract_string (body, "client_ip");
+
+      if (!username || !vec_len (username))
+        {
+          vec_free (username);
+          username = tlsctrl_header_value_dup (conn->request_data, header_end,
+                                               "X-Username:");
+        }
+      if (!profile || !vec_len (profile))
+        {
+          vec_free (profile);
+          profile = tlsctrl_header_value_dup (conn->request_data, header_end,
+                                              "X-Profile:");
+        }
+      if (!client_ip || !vec_len (client_ip))
+        {
+          vec_free (client_ip);
+          client_ip = tlsctrl_header_value_dup (conn->request_data, header_end,
+                                                "X-Client-IP:");
+        }
+      if (!username || !vec_len (username))
+        {
+          tm->parse_errors += 1;
+          tlsctrl_build_json_response (conn, 400, "Bad Request",
+                                       "{\"ok\":false,\"error\":\"username required\"}");
+          goto done;
+        }
+      if (!profile || !vec_len (profile))
+        {
+          vec_free (profile);
+          profile = format (0, "default");
+        }
+      if (!client_ip || !vec_len (client_ip))
+        {
+          vec_free (client_ip);
+          client_ip = format (0, "0.0.0.0");
+        }
+      if (tlsctrl_http_authorize_user (username, peer_cert_serial, 1, &auth_status) <= 0)
+        {
+          if (auth_status == 423)
+            tlsctrl_build_json_response (conn, 423, "Locked",
+                                         "{\"ok\":false,\"error\":\"disconnected by admin\"}");
+          else
+            tlsctrl_build_json_response (conn, 401, "Unauthorized",
+                                         "{\"ok\":false,\"error\":\"unauthorized\"}");
+          goto done;
+        }
+      proxy_req = tlsctrl_dup_string0 (body);
+      if (tlsctrl_http_post_agent_json ("/api/plugin/2fa/verify",
+                                        proxy_req, &proxy_status, &proxy_resp) != 0)
+        {
+          tlsctrl_build_json_response (conn, 502, "Bad Gateway",
+                                       "{\"ok\":false,\"error\":\"2fa verify failed\"}");
+          vec_free (proxy_req);
+          vec_free (proxy_resp);
+          goto done;
+        }
+      vec_free (proxy_req);
+      if (proxy_status != 200 || !tlsctrl_json_contains_true (proxy_resp, "\"passed\":true"))
+        {
+          tlsctrl_build_response (conn, proxy_status,
+                                  tlsctrl_http_status_text (proxy_status),
+                                  "application/json", proxy_resp);
+          vec_free (proxy_resp);
+          goto done;
+        }
+      vec_free (proxy_resp);
+      if (tlsctrl_vpn_tunnel_open ((char *) username, (char *) profile,
+                                   (char *) client_ip, &tunnel_id,
+                                   &assigned_ip, &gateway,
+                                   &dns_servers, &include_routes,
+                                   &exclude_routes, &full_tunnel,
+                                   &mtu, &mss, &lease_seconds) != 0)
+        {
+          tlsctrl_build_json_response (conn, 500, "Internal Server Error",
+                                       "{\"ok\":false,\"error\":\"vpn tunnel open failed\"}");
+          goto done;
+        }
+
+      tlsctrl_vpn_stream_attach (tunnel_id, conn->session_handle);
+
+      clib_spinlock_lock_if_init (&tm->clients_lock);
+      client = tlsctrl_client_find_internal (username, 1);
+      tlsctrl_client_touch_heartbeat_locked (
+        client,
+        (peer_cert_serial && vec_len (peer_cert_serial)) ? peer_cert_serial : 0,
+        body, mac_hdr, sys_user_hdr, os_type_hdr, os_version_hdr, uptime_hdr,
+        0, (u8 *) "manual_connect", 1);
+      clib_spinlock_unlock_if_init (&tm->clients_lock);
+
+      tlsctrl_build_vpn_bind_ok_response (conn, tunnel_id, assigned_ip, gateway,
+                                          dns_servers, include_routes,
+                                          exclude_routes, full_tunnel, mtu, mss,
+                                          lease_seconds);
+    }
+  else if (!strcmp ((char *) method, "POST") &&
            !strncmp ((char *) target, "/api/client/vpn-bind", 20))
     {
       username = tlsctrl_json_extract_string (body, "username");
@@ -2075,6 +2232,44 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
           goto done;
         }
 
+      {
+        int proxy_status = 502;
+        u8 *proxy_req = 0;
+        u8 *proxy_resp = 0;
+        proxy_req = format (0,
+                            "{\"username\":\"%s\",\"profile\":\"%s\",\"client_ip\":\"%s\"}",
+                            username ? (char *) username : "",
+                            profile ? (char *) profile : "default",
+                            client_ip ? (char *) client_ip : "0.0.0.0");
+        if (tlsctrl_http_post_agent_json ("/api/plugin/2fa/start",
+                                          proxy_req, &proxy_status, &proxy_resp) != 0)
+          {
+            tlsctrl_build_json_response (conn, 502, "Bad Gateway",
+                                         "{\"ok\":false,\"error\":\"2fa start failed\"}");
+            vec_free (proxy_req);
+            vec_free (proxy_resp);
+            goto done;
+          }
+        vec_free (proxy_req);
+        if (proxy_status >= 400)
+          {
+            tlsctrl_build_response (conn, proxy_status,
+                                    tlsctrl_http_status_text (proxy_status),
+                                    "application/json", proxy_resp);
+            vec_free (proxy_resp);
+            goto done;
+          }
+        if (tlsctrl_json_contains_true (proxy_resp, "\"required\":true") ||
+            strstr ((char *) proxy_resp, "\"status\":\"2fa_required\"") != 0)
+          {
+            tlsctrl_build_response (conn, 200, "OK", "application/json",
+                                    proxy_resp);
+            vec_free (proxy_resp);
+            goto done;
+          }
+        vec_free (proxy_resp);
+      }
+
       if (tlsctrl_vpn_tunnel_open ((char *) username, (char *) profile,
                                    (char *) client_ip, &tunnel_id,
                                    &assigned_ip, &gateway,
@@ -2098,21 +2293,10 @@ tlsctrl_handle_request (tlsctrl_conn_t *conn)
         0, (u8 *) "manual_connect", 1);
       clib_spinlock_unlock_if_init (&tm->clients_lock);
 
-      json = format (
-        0,
-        "{\"ok\":true,\"tunnel_id\":%u,"
-        "\"assigned_ip\":\"%s\",\"gateway\":\"%s\",\"dns_servers\":\"%s\","
-        "\"include_routes\":\"%s\",\"exclude_routes\":\"%s\","
-        "\"full_tunnel\":%s,\"mtu\":%u,\"mss\":%u,\"lease_seconds\":%u}",
-        tunnel_id,
-        assigned_ip ? (char *) assigned_ip : "",
-        gateway ? (char *) gateway : "",
-        dns_servers ? (char *) dns_servers : "",
-        include_routes ? (char *) include_routes : "",
-        exclude_routes ? (char *) exclude_routes : "",
-        full_tunnel ? "true" : "false",
-        mtu, mss, lease_seconds);
-      tlsctrl_build_response (conn, 200, "OK", "application/json", json);
+      tlsctrl_build_vpn_bind_ok_response (conn, tunnel_id, assigned_ip, gateway,
+                                          dns_servers, include_routes,
+                                          exclude_routes, full_tunnel, mtu, mss,
+                                          lease_seconds);
     }
   else if (!strcmp ((char *) method, "GET") &&
            !strncmp ((char *) target, "/api/client/vpn-stream-tx", 25))

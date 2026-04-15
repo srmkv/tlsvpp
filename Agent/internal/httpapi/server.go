@@ -118,6 +118,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/admin/settings", s.handleAdminSettings)
+	mux.HandleFunc("/api/admin/settings/smtp", s.handleAdminSMTPSettings)
+	mux.HandleFunc("/api/admin/settings/smtp/test", s.handleAdminSMTPTest)
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/profiles", s.handleAdminProfiles)
 	mux.HandleFunc("/api/admin/profiles/delete", s.handleAdminDeleteProfile)
@@ -129,6 +131,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/plugin/app-policy/resolve", s.handlePluginResolveAppPolicy)
 	mux.HandleFunc("/api/plugin/app-policy/evaluate", s.handlePluginEvaluateAppPolicy)
 	mux.HandleFunc("/api/plugin/app-policy/violation", s.handlePluginAppPolicyViolation)
+	mux.HandleFunc("/api/plugin/2fa/start", s.handlePlugin2FAStart)
+	mux.HandleFunc("/api/plugin/2fa/verify", s.handlePlugin2FAVerify)
+	mux.HandleFunc("/api/plugin/2fa/resend", s.handlePlugin2FAResend)
 	mux.HandleFunc("/api/admin/users/reissue", s.handleAdminReissue)
 	mux.HandleFunc("/api/admin/users/delete", s.handleAdminDelete)
 	mux.HandleFunc("/api/admin/users/request-apps", s.handleAdminRequestApps)
@@ -204,6 +209,8 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			CertSerial string `json:"cert_serial"`
 			Enabled    bool   `json:"enabled"`
 			Profile    string `json:"profile"`
+			Email      string `json:"email"`
+			Require2FA bool   `json:"require_2fa"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, "admin_settings_post_decode", 400, err)
@@ -211,6 +218,10 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.svc.UpsertUser(r.Context(), strings.TrimSpace(req.Username), strings.TrimSpace(req.CertSerial), req.Enabled, strings.TrimSpace(req.Profile)); err != nil {
 			writeError(w, "admin_users_post", 400, err)
+			return
+		}
+		if err := s.svc.UpdateUser2FAConfig(strings.TrimSpace(req.Username), strings.TrimSpace(req.Email), req.Require2FA); err != nil {
+			writeError(w, "admin_users_post_2fa", 400, err)
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})

@@ -87,6 +87,17 @@ func (u *UI) connectOnce() {
 	go func() {
 		session, err := client.ConnectVPN(u.cfg)
 		if err != nil {
+			var twoFAErr *client.TwoFARequiredError
+			if errors.As(err, &twoFAErr) {
+				u.mu.Lock()
+				u.reconnecting = false
+				u.disconnecting = false
+				u.mu.Unlock()
+				u.setStatus("Требуется код подтверждения")
+				u.appendLog("Для подключения требуется код из письма: " + strings.TrimSpace(twoFAErr.Challenge.MaskedEmail))
+				u.promptEmail2FA(twoFAErr.Challenge)
+				return
+			}
 			msg := friendlyClientError(err)
 			u.mu.Lock()
 			u.reconnecting = false
@@ -103,25 +114,100 @@ func (u *UI) connectOnce() {
 			}
 			return
 		}
-		u.mu.Lock()
-		u.self = session
-		u.lastSuccess = time.Now().UTC()
-		u.connected = true
-		u.reconnecting = false
-		u.disconnecting = false
-		u.monitorFailures = 0
-		u.lastMonitorError = ""
-		u.mu.Unlock()
-		u.renderSelfState()
-		u.refreshVPNDetails()
-		u.updateConnectionUI(true, "connected")
-		u.setStatus("Подключено")
-		u.appendLog("VPN bind выполнен, tunnel_id=" + strings.TrimSpace(formatTunnelID(session.TunnelID)))
-		go u.refreshProcesses()
+		u.onVPNConnected(session)
 	}()
 }
 
 func formatTunnelID(id uint64) string { return strconv.FormatUint(id, 10) }
+
+func (u *UI) onVPNConnected(session model.ClientSession) {
+	u.mu.Lock()
+	u.self = session
+	u.lastSuccess = time.Now().UTC()
+	u.connected = true
+	u.reconnecting = false
+	u.disconnecting = false
+	u.monitorFailures = 0
+	u.lastMonitorError = ""
+	u.manualDisconnectWanted = false
+	u.mu.Unlock()
+	u.renderSelfState()
+	u.refreshVPNDetails()
+	u.updateConnectionUI(true, "connected")
+	u.setStatus("Подключено")
+	u.appendLog("VPN bind выполнен, tunnel_id=" + strings.TrimSpace(formatTunnelID(session.TunnelID)))
+	go u.refreshProcesses()
+}
+
+func (u *UI) promptEmail2FA(challenge client.TwoFAChallenge) {
+	if u == nil || u.window == nil {
+		return
+	}
+	fyne.Do(func() {
+		code := widget.NewEntry()
+		code.SetPlaceHolder("Введите код из письма")
+		info := widget.NewLabel("На адрес " + strings.TrimSpace(challenge.MaskedEmail) + " отправлен код подтверждения входа.")
+		info.Wrapping = fyne.TextWrapWord
+		status := widget.NewLabel("")
+		current := challenge
+		resendBtn := widget.NewButton("Отправить код ещё раз", func() {
+			status.SetText("Отправка нового письма...")
+			go func() {
+				updated, err := client.ResendEmail2FA(u.cfg, current)
+				if err != nil {
+					fyne.Do(func() { status.SetText("Ошибка: " + friendlyClientError(err)) })
+					u.appendLog("Ошибка повторной отправки кода: " + friendlyClientError(err))
+					return
+				}
+				current = updated
+				u.appendLog("Код подтверждения отправлен повторно")
+				fyne.Do(func() {
+					status.SetText("Код отправлен повторно на " + strings.TrimSpace(current.MaskedEmail))
+				})
+			}()
+		})
+		content := container.NewVBox(info, code, resendBtn, status)
+		var dlg dialog.Dialog
+		completed := false
+		verifying := false
+		dlg = dialog.NewCustomConfirm("Подтверждение входа", "Подтвердить", "Отмена", content, func(ok bool) {
+			if !ok {
+				if completed || verifying {
+					return
+				}
+				u.setStatus("Подключение отменено")
+				u.updateConnectionUI(false, "")
+				u.appendLog("Подключение отменено на этапе ввода email-кода")
+				return
+			}
+			if completed || verifying {
+				return
+			}
+			verifying = true
+			status.SetText("Проверка кода...")
+			go func(codeValue string, ch client.TwoFAChallenge) {
+				session, err := client.CompleteEmail2FA(u.cfg, ch, codeValue)
+				if err != nil {
+					u.appendLog("Ошибка подтверждения кода: " + friendlyClientError(err))
+					fyne.Do(func() {
+						verifying = false
+						status.SetText("Ошибка: " + friendlyClientError(err))
+					})
+					return
+				}
+				fyne.Do(func() {
+					completed = true
+					verifying = false
+					if dlg != nil {
+						dlg.Hide()
+					}
+				})
+				u.onVPNConnected(session)
+			}(code.Text, current)
+		}, u.window)
+		dlg.Show()
+	})
+}
 
 var policyMessageFieldRE = regexp.MustCompile(`(?s)"message"\s*:\s*"((?:\\.|[^"])*)"`)
 

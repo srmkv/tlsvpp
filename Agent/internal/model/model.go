@@ -15,14 +15,18 @@ type NetworkInterface struct {
 }
 
 type User struct {
-	Username   string    `json:"username"`
-	CertSerial string    `json:"cert_serial"`
-	Enabled    bool      `json:"enabled"`
-	Profile    string    `json:"profile,omitempty"`
-	Generation uint64    `json:"generation"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	LastSeen   time.Time `json:"last_seen"`
+	Username    string    `json:"username"`
+	CertSerial  string    `json:"cert_serial"`
+	Enabled     bool      `json:"enabled"`
+	Profile     string    `json:"profile,omitempty"`
+	Email       string    `json:"email,omitempty"`
+	Require2FA  bool      `json:"require_2fa,omitempty"`
+	Last2FAAt   time.Time `json:"last_2fa_at,omitempty"`
+	TwoFAStatus string    `json:"twofa_status,omitempty"`
+	Generation  uint64    `json:"generation"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	LastSeen    time.Time `json:"last_seen"`
 }
 
 type ShardNode struct {
@@ -82,6 +86,11 @@ type Session struct {
 	LastSeen          time.Time          `json:"last_seen"`
 	AppsCount         int                `json:"apps_count"`
 	AppsUpdatedAt     time.Time          `json:"apps_updated_at"`
+	Email             string             `json:"email,omitempty"`
+	Require2FA        bool               `json:"require_2fa,omitempty"`
+	TwoFAPassed       bool               `json:"twofa_passed,omitempty"`
+	TwoFAStatus       string             `json:"twofa_status,omitempty"`
+	TwoFAAt           time.Time          `json:"twofa_at,omitempty"`
 	PolicyBlocked     bool               `json:"policy_blocked,omitempty"`
 	PolicyBlockedAt   time.Time          `json:"policy_blocked_at,omitempty"`
 	PolicyName        string             `json:"policy_name,omitempty"`

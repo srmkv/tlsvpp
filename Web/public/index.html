@@ -180,6 +180,38 @@
     <div class="muted small">Сертификат сервера будет выпускаться для localhost, всех локальных IP сервера, адреса из URL и дополнительных SAN из поля выше.</div>
   </div>
 
+
+
+  <div class="card" style="margin-top:14px">
+    <div style="font-weight:800;margin-bottom:12px">SMTP / Email 2FA</div>
+    <div class="row">
+      <div class="field" style="max-width:180px"><label for="smtpEnabled">Email 2FA</label><select id="smtpEnabled"><option value="true">Включено</option><option value="false">Выключено</option></select></div>
+      <div class="field"><label for="smtpHost">SMTP host</label><input id="smtpHost" placeholder="smtp.example.com" /></div>
+      <div class="field" style="max-width:140px"><label for="smtpPort">SMTP port</label><input id="smtpPort" placeholder="587" /></div>
+      <div class="field" style="max-width:180px"><label for="smtpSecurity">Шифрование</label><select id="smtpSecurity"><option value="starttls">STARTTLS</option><option value="tls">SSL/TLS</option><option value="none">Без TLS</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="smtpUsername">SMTP username</label><input id="smtpUsername" /></div>
+      <div class="field"><label for="smtpPassword">SMTP password</label><input id="smtpPassword" type="password" /></div>
+      <div class="field"><label for="smtpFromEmail">From email</label><input id="smtpFromEmail" placeholder="vpn@example.com" /></div>
+      <div class="field"><label for="smtpFromName">From name</label><input id="smtpFromName" placeholder="ZTNA Экран-М" /></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="smtpReplyTo">Reply-To</label><input id="smtpReplyTo" placeholder="support@example.com" /></div>
+      <div class="field"><label for="smtpSubjectTemplate">Тема письма</label><input id="smtpSubjectTemplate" placeholder="Код подтверждения входа в VPN" /></div>
+      <div class="field"><label for="smtpTestTo">Тестовый email</label><input id="smtpTestTo" placeholder="user@example.com" /></div>
+    </div>
+    <div class="row">
+      <div class="field full"><label for="smtpBodyTemplate">Шаблон письма</label><textarea id="smtpBodyTemplate" rows="5" placeholder="Ваш код: {{CODE}}"></textarea></div>
+    </div>
+    <div class="row">
+      <div class="field" style="max-width:160px"><label for="smtpCodeTTL">TTL кода, сек</label><input id="smtpCodeTTL" placeholder="300" /></div>
+      <div class="field" style="max-width:160px"><label for="smtpCodeLength">Длина кода</label><input id="smtpCodeLength" placeholder="6" /></div>
+      <div class="field" style="max-width:160px"><label for="smtpMaxAttempts">Попыток</label><input id="smtpMaxAttempts" placeholder="5" /></div>
+      <div class="actions"><button type="button" id="btnSaveSMTP">Сохранить SMTP</button><button type="button" id="btnTestSMTP">Отправить тестовое письмо</button></div>
+    </div>
+  </div>
+
   <div class="grid3">
     <div class="card">
       <div style="font-weight:800;margin-bottom:12px">Выдать bundle</div>
@@ -316,6 +348,8 @@
         <div class="field"><label for="certSerial">Cert serial</label><input id="certSerial" class="mono" placeholder="вручную" /></div>
         <div class="field" style="max-width:180px"><label for="enabled">Доступ</label><select id="enabled"><option value="true">Включен</option><option value="false">Выключен</option></select></div>
         <div class="field" style="max-width:220px"><label for="userProfile">Профиль</label><select id="userProfile"><option value="">Без профиля</option></select></div>
+        <div class="field"><label for="userEmail">Email</label><input id="userEmail" placeholder="user@example.com" /></div>
+        <div class="field" style="max-width:180px"><label for="userRequire2FA">Email 2FA</label><select id="userRequire2FA"><option value="false">Выключено</option><option value="true">Включено</option></select></div>
         <div><button type="button" id="btnUpsert">Сохранить</button></div>
       </div>
       <div class="muted small">Форма перенесена в этот раздел, чтобы управление пользователями и активными сессиями было в одном месте.</div>
@@ -324,10 +358,10 @@
       <table>
         <thead>
           <tr>
-            <th class="statusCol">Статус</th><th>Учетная запись</th><th>Профиль</th><th>IP</th><th>MAC</th><th>Пользователь ОС</th><th>Тип ОС</th><th>Версия ОС</th><th>Кол-во приложений</th><th>Последняя активность</th><th>Действия</th>
+            <th class="statusCol">Статус</th><th>Учетная запись</th><th>Профиль</th><th>Email</th><th>2FA</th><th>IP</th><th>MAC</th><th>Пользователь ОС</th><th>Тип ОС</th><th>Версия ОС</th><th>Кол-во приложений</th><th>Последняя активность</th><th>Действия</th>
           </tr>
         </thead>
-        <tbody id="rows"><tr><td colspan="11" class="muted">Нет данных</td></tr></tbody>
+        <tbody id="rows"><tr><td colspan="13" class="muted">Нет данных</td></tr></tbody>
       </table>
     </div>
   </div>

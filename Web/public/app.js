@@ -118,6 +118,15 @@ function runtimeHintBadge(row) {
   if (row.connected) return stateIcon('stateWarn', 'R', 'Есть agent session, но runtime tunnel не найден');
   return stateIcon('stateOff', 'R', 'Runtime не подтверждён');
 }
+function twoFAStatusLabel(row) {
+  if (!row || !row.require_2fa) return '2FA не требуется';
+  return row.twofa_passed || row.twofa_status === 'passed' ? '2FA пройдена' : '2FA не пройдена';
+}
+function twoFABadge(row) {
+  if (!row || !row.require_2fa) return stateIcon('stateInfo', '2', '2FA не требуется');
+  if (row.twofa_passed || row.twofa_status === 'passed') return stateIcon('stateOn', '2', row.twofa_at ? `2FA пройдена · ${fmtDate(row.twofa_at)}` : '2FA пройдена');
+  return stateIcon('stateWarn', '2', '2FA не пройдена');
+}
 function buildUserMenu(username, enabled) {
   return [
     `<button class="menuItem" data-action="cert" data-user="${esc(username)}">📜 Просмотреть сертификат</button>`,
@@ -203,6 +212,45 @@ async function loadPolicies() {
 function profileNameList() {
   return profiles.map(p => p?.name).filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru'));
 }
+
+async function loadSMTPSettings() {
+  let st = {};
+  try { st = await jget('/api/admin/settings/smtp'); } catch (_) { st = {}; }
+  if (byId('smtpEnabled')) byId('smtpEnabled').value = st.enabled ? 'true' : 'false';
+  if (byId('smtpHost')) byId('smtpHost').value = st.host || '';
+  if (byId('smtpPort')) byId('smtpPort').value = st.port ? String(st.port) : '';
+  if (byId('smtpSecurity')) byId('smtpSecurity').value = st.security || 'starttls';
+  if (byId('smtpUsername')) byId('smtpUsername').value = st.username || '';
+  if (byId('smtpPassword')) byId('smtpPassword').value = st.password || '';
+  if (byId('smtpFromEmail')) byId('smtpFromEmail').value = st.from_email || '';
+  if (byId('smtpFromName')) byId('smtpFromName').value = st.from_name || '';
+  if (byId('smtpReplyTo')) byId('smtpReplyTo').value = st.reply_to || '';
+  if (byId('smtpSubjectTemplate')) byId('smtpSubjectTemplate').value = st.subject_template || '';
+  if (byId('smtpBodyTemplate')) byId('smtpBodyTemplate').value = st.body_template || '';
+  if (byId('smtpCodeTTL')) byId('smtpCodeTTL').value = st.code_ttl_seconds ? String(st.code_ttl_seconds) : '300';
+  if (byId('smtpCodeLength')) byId('smtpCodeLength').value = st.code_length ? String(st.code_length) : '6';
+  if (byId('smtpMaxAttempts')) byId('smtpMaxAttempts').value = st.max_attempts ? String(st.max_attempts) : '5';
+}
+
+function smtpPayloadFromForm() {
+  return {
+    enabled: byId('smtpEnabled') ? byId('smtpEnabled').value === 'true' : false,
+    host: byId('smtpHost')?.value.trim() || '',
+    port: parseInt(byId('smtpPort')?.value || '0', 10) || 0,
+    security: byId('smtpSecurity')?.value || 'starttls',
+    username: byId('smtpUsername')?.value.trim() || '',
+    password: byId('smtpPassword')?.value || '',
+    from_email: byId('smtpFromEmail')?.value.trim() || '',
+    from_name: byId('smtpFromName')?.value.trim() || '',
+    reply_to: byId('smtpReplyTo')?.value.trim() || '',
+    subject_template: byId('smtpSubjectTemplate')?.value || '',
+    body_template: byId('smtpBodyTemplate')?.value || '',
+    code_ttl_seconds: parseInt(byId('smtpCodeTTL')?.value || '300', 10) || 300,
+    code_length: parseInt(byId('smtpCodeLength')?.value || '6', 10) || 6,
+    max_attempts: parseInt(byId('smtpMaxAttempts')?.value || '5', 10) || 5
+  };
+}
+
 function runtimeTunnels() {
   return Array.isArray(runtimeData?.tunnels) ? runtimeData.tunnels : [];
 }
@@ -234,6 +282,11 @@ function mergedRows() {
       user_last_seen: u.last_seen || '',
       enabled: !!u.enabled,
       profile: u.profile || '',
+      email: u.email || '',
+      require_2fa: !!u.require_2fa,
+      twofa_status: u.require_2fa ? 'not_passed' : 'not_required',
+      twofa_passed: !u.require_2fa,
+      twofa_at: u.last_2fa_at || '',
       connected: false,
       runtime_connected: false,
       runtime_profile: '',
@@ -248,7 +301,7 @@ function mergedRows() {
     });
   }
   for (const s of sessions || []) {
-    const row = map.get(s.username) || { username: s.username || '—', cert_serial: s.cert_serial || '—', generation: 0, user_last_seen: '', enabled: true, profile: '' };
+    const row = map.get(s.username) || { username: s.username || '—', cert_serial: s.cert_serial || '—', generation: 0, user_last_seen: '', enabled: true, profile: '', email: '', require_2fa: false, twofa_status: 'not_required', twofa_passed: true, twofa_at: '' };
     row.connected = !!s.connected;
     row.ip = s.ip || row.ip || '—';
     row.mac = s.mac || row.mac || '—';
@@ -262,6 +315,10 @@ function mergedRows() {
     row.apps_count = s.apps_count || row.apps_count || 0;
     row.apps_updated_at = s.apps_updated_at || row.apps_updated_at || '';
     row.cert_serial = s.cert_serial || row.cert_serial || '—';
+    row.require_2fa = s.require_2fa !== undefined ? !!s.require_2fa : !!row.require_2fa;
+    row.twofa_status = s.twofa_status || row.twofa_status || (row.require_2fa ? 'not_passed' : 'not_required');
+    row.twofa_passed = s.twofa_passed !== undefined ? !!s.twofa_passed : !!row.twofa_passed;
+    row.twofa_at = s.twofa_at || row.twofa_at || '';
     row.interfaces = Array.isArray(s.interfaces) && s.interfaces.length ? s.interfaces : (row.interfaces || []);
     row.policy_blocked = !!s.policy_blocked;
     row.policy_blocked_at = s.policy_blocked_at || row.policy_blocked_at || '';
@@ -272,7 +329,7 @@ function mergedRows() {
   }
   for (const t of runtimeTunnels()) {
     const username = String(t?.username || '').trim() || '—';
-    const row = map.get(username) || { username, cert_serial: '—', generation: 0, user_last_seen: '', enabled: !!t?.user_enabled, profile: t?.agent_profile || t?.profile || '' };
+    const row = map.get(username) || { username, cert_serial: '—', generation: 0, user_last_seen: '', enabled: !!t?.user_enabled, profile: t?.agent_profile || t?.profile || '', require_2fa: false, twofa_status: 'not_required', twofa_passed: true, twofa_at: '' };
     row.runtime_connected = !!t.running;
     row.runtime_profile = t.profile || row.runtime_profile || row.profile || '';
     row.runtime_tunnel_id = Number(t.tunnel_id || 0);
@@ -303,7 +360,7 @@ function updateHistory(rows) {
   const reasons = getReasonStore();
   for (const row of rows) {
     const status = (row.runtime_connected || row.connected) ? 'connected' : (row.policy_blocked ? 'blocked_by_policy' : (reasons[row.username] === 'admin_disconnect' ? 'disconnected_by_admin' : 'disconnected'));
-    const item = { at: row.policy_blocked_at || new Date().toISOString(), status, cert_serial: row.cert_serial || '', connected_at: row.connected_at || '', last_seen: row.last_seen || row.user_last_seen || '', ip: row.ip || '—', mac: row.mac || '—', source: row.source || '—', system_user: row.system_user || '—', os_name: row.os_name || '—', os_version: row.os_version || '—', system_uptime: row.system_uptime || '—', policy_name: row.policy_name || '', policy_message: row.policy_message || '', policy_matched_apps: Array.isArray(row.policy_matched_apps) ? row.policy_matched_apps.slice() : [] };
+    const item = { at: row.policy_blocked_at || new Date().toISOString(), status, cert_serial: row.cert_serial || '', connected_at: row.connected_at || '', last_seen: row.last_seen || row.user_last_seen || '', ip: row.ip || '—', mac: row.mac || '—', source: row.source || '—', system_user: row.system_user || '—', os_name: row.os_name || '—', os_version: row.os_version || '—', system_uptime: row.system_uptime || '—', require_2fa: !!row.require_2fa, twofa_status: row.twofa_status || (row.require_2fa ? 'not_passed' : 'not_required'), twofa_passed: !!row.twofa_passed, twofa_at: row.twofa_at || '', policy_name: row.policy_name || '', policy_message: row.policy_message || '', policy_matched_apps: Array.isArray(row.policy_matched_apps) ? row.policy_matched_apps.slice() : [] };
 
     const list = Array.isArray(history[row.username]) ? history[row.username] : [];
     const prev = list[0];
@@ -376,7 +433,7 @@ function renderUsers() {
   const rows = mergedRows();
   updateHistory(rows);
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">Нет данных</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">Нет данных</td></tr>';
     renderHealth();
     return;
   }
@@ -385,6 +442,8 @@ function renderUsers() {
       `<td class="statusCell"><div class="statusIcons">${accountBadge(r)}${sessionBadge(r)}${policyBadge(r)}</div></td>` +
       `<td>${esc(r.username)}</td>` +
       `<td>${esc(r.profile || '—')}</td>` +
+      `<td>${esc(r.email || '—')}</td>` +
+      `<td>${r.require_2fa ? pill('warn', 'Email 2FA') : pill('mute', '—')}</td>` +
       `<td class="mono">${esc(r.ip)}</td>` +
       `<td class="mono">${esc(r.mac)}</td>` +
       `<td>${esc(r.system_user)}</td>` +
@@ -456,7 +515,7 @@ function buildSessionGroups(username) {
     const key = item.status || 'disconnected';
     if (key === 'connected') {
       if (!current) {
-        current = { id: item.connected_at || item.at, status: 'connected', ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: item.connected_at || item.at, lastSeen: item.last_seen || item.at, endedAt: '', steps: [ { kind: 'open', title: 'Открытие session', at: item.connected_at || item.at, meta: 'Session зафиксирована в agent/runtime' }, { kind: 'handshake', title: 'Session подтверждена', at: item.at, meta: 'Подключение подтверждено по данным control-plane' } ] };
+        current = { id: item.connected_at || item.at, status: 'connected', ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: item.connected_at || item.at, lastSeen: item.last_seen || item.at, endedAt: '', twofaStatus: item.twofa_status || (item.require_2fa ? 'not_passed' : 'not_required'), require2FA: !!item.require_2fa, twofaPassed: !!item.twofa_passed, twofaAt: item.twofa_at || '', steps: [ { kind: 'open', title: 'Открытие session', at: item.connected_at || item.at, meta: 'Session зафиксирована в agent/runtime' }, { kind: 'twofa', title: !item.require_2fa ? '2FA не требуется' : ((item.twofa_passed || item.twofa_status === 'passed') ? '2FA пройдена' : '2FA не пройдена'), at: item.twofa_at || item.connected_at || item.at, meta: !item.require_2fa ? 'Для этого пользователя второй фактор не требуется' : ((item.twofa_passed || item.twofa_status === 'passed') ? 'Подключение подтверждено вторым фактором' : 'Подключение без подтверждения второго фактора') }, { kind: 'handshake', title: 'Session подтверждена', at: item.at, meta: 'Подключение подтверждено по данным control-plane' } ] };
       } else { current.lastSeen = item.last_seen || current.lastSeen; }
     } else {
       const closeTitle = key === 'disconnected_by_admin' ? 'Завершение сервером' : key === 'blocked_by_policy' ? 'Подключение заблокировано политикой' : 'Завершение session';
@@ -468,7 +527,7 @@ function buildSessionGroups(username) {
         current.steps.push({ kind: 'close', title: closeTitle, at: item.at, meta: closeMeta });
         groups.push(current); current = null;
       } else {
-        groups.push({ id: item.at, status: key, ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: '', lastSeen: item.last_seen || item.at, endedAt: item.at, steps: [{ kind: 'close', title: key === 'blocked_by_policy' ? 'Попытка подключения заблокирована' : (key === 'disconnected_by_admin' ? 'Завершение сервером' : 'Отключение'), at: item.at, meta: closeMeta }] });
+        groups.push({ id: item.at, status: key, ip: item.ip || '—', mac: item.mac || '—', source: item.source || '—', startedAt: '', lastSeen: item.last_seen || item.at, endedAt: item.at, twofaStatus: item.twofa_status || (item.require_2fa ? 'not_passed' : 'not_required'), require2FA: !!item.require_2fa, twofaPassed: !!item.twofa_passed, twofaAt: item.twofa_at || '', steps: [{ kind: 'twofa', title: !item.require_2fa ? '2FA не требуется' : ((item.twofa_passed || item.twofa_status === 'passed') ? '2FA пройдена' : '2FA не пройдена'), at: item.twofa_at || item.at, meta: !item.require_2fa ? 'Для этого пользователя второй фактор не требуется' : ((item.twofa_passed || item.twofa_status === 'passed') ? 'Подключение подтверждено вторым фактором' : 'Подключение без подтверждения второго фактора') }, { kind: 'close', title: key === 'blocked_by_policy' ? 'Попытка подключения заблокирована' : (key === 'disconnected_by_admin' ? 'Завершение сервером' : 'Отключение'), at: item.at, meta: closeMeta }] });
       }
     }
   }
@@ -488,8 +547,13 @@ function buildSessionGroups(username) {
         startedAt: row.connected_at || row.runtime_last_seen || row.last_seen || row.user_last_seen || '',
         lastSeen: row.last_seen || row.runtime_last_seen || row.user_last_seen || '',
         endedAt: '',
+        twofaStatus: row.twofa_status || (row.require_2fa ? 'not_passed' : 'not_required'),
+        require2FA: !!row.require_2fa,
+        twofaPassed: !!row.twofa_passed,
+        twofaAt: row.twofa_at || '',
         steps: [
           { kind: 'open', title: 'Открытие session', at: row.connected_at || row.runtime_last_seen || row.last_seen || new Date().toISOString(), meta: row.connected ? 'Agent session активна' : 'Активный runtime tunnel найден в plugin' },
+          { kind: 'twofa', title: !row.require_2fa ? '2FA не требуется' : ((row.twofa_passed || row.twofa_status === 'passed') ? '2FA пройдена' : '2FA не пройдена'), at: row.twofa_at || row.connected_at || row.runtime_last_seen || row.last_seen || new Date().toISOString(), meta: !row.require_2fa ? 'Для этого пользователя второй фактор не требуется' : ((row.twofa_passed || row.twofa_status === 'passed') ? 'Подключение подтверждено вторым фактором' : 'Подключение без подтверждения второго фактора') },
           { kind: 'handshake', title: 'Session активна сейчас', at: row.last_seen || row.runtime_last_seen || new Date().toISOString(), meta: row.runtime_connected ? `Plugin runtime подтверждён${row.runtime_tunnel_id ? ' · tunnel ' + row.runtime_tunnel_id : ''}` : 'Runtime tunnel не подтверждён' }
         ]
       });
@@ -527,12 +591,13 @@ function renderRoadmap(username) {
           `<div>${statusBadge(group.status)}</div>` +
           `<div class="roadmapMeta">Старт: ${esc(fmtDate(group.startedAt))} · Завершение: ${esc(fmtDate(group.endedAt))}</div>` +
           `<div class="roadmapMeta">IP: ${esc(group.ip || '—')} · MAC: ${esc(group.mac || '—')} · ${esc(group.source || '—')}</div>` +
+          `<div class="roadmapMeta">${esc(group.require2FA ? (group.twofaPassed || group.twofaStatus === 'passed' ? '2FA: пройдена' : '2FA: не пройдена') : '2FA: не требуется')}</div>` +
         '</div>' +
         `<div class="roadmapMeta">Этапов: ${esc(String(group.steps.length))}</div>` +
       '</summary>' +
       '<div class="roadmapBody"><div class="timeline">' +
         group.steps.map((step) => (
-          '<div class="step ' + (step.kind === 'open' ? 'stepOpen' : '') + ' ' + (step.kind === 'handshake' ? 'stepHandshake' : '') + ' ' + (step.kind === 'activity' ? 'stepActivity' : '') + ' ' + (step.kind === 'close' ? 'stepClose' : '') + '">' +
+          '<div class="step ' + (step.kind === 'open' ? 'stepOpen' : '') + ' ' + (step.kind === 'twofa' ? 'stepHandshake' : '') + ' ' + (step.kind === 'handshake' ? 'stepHandshake' : '') + ' ' + (step.kind === 'activity' ? 'stepActivity' : '') + ' ' + (step.kind === 'close' ? 'stepClose' : '') + '">' +
             `<div class="stepTitle">${esc(step.title)}</div><div class="stepMeta">${esc(fmtDate(step.at))}</div><div class="stepMeta">${esc(step.meta || '—')}</div>` +
           '</div>'
         )).join('') +
@@ -660,7 +725,9 @@ async function setUserEnabled(username, enabled) {
     username,
     cert_serial: record.cert_serial || '',
     enabled: !!enabled,
-    profile: record.profile || ''
+    profile: record.profile || '',
+    email: record.email || '',
+    require_2fa: !!record.require_2fa
   });
   const reasons = getReasonStore();
   if (enabled) delete reasons[username];
@@ -1081,12 +1148,28 @@ byId('btnApplyApi').addEventListener('click', async () => {
   try {
     await pingApiBase();
     await loadSettings();
+    await loadSMTPSettings();
     await loadAll();
   } catch (e) {
     API_BASE = previous; localStorage.setItem('tlsctrl_api_base', API_BASE); syncApiBaseUI();
     alert('Не удалось подключиться к API Base: ' + (e?.message || e));
   }
 });
+if (byId('btnSaveSMTP')) {
+  byId('btnSaveSMTP').addEventListener('click', async () => {
+    await jpost('/api/admin/settings/smtp', smtpPayloadFromForm());
+    await loadSMTPSettings();
+    alert('SMTP настройки сохранены');
+  });
+}
+if (byId('btnTestSMTP')) {
+  byId('btnTestSMTP').addEventListener('click', async () => {
+    const to = byId('smtpTestTo') ? byId('smtpTestTo').value.trim() : '';
+    if (!to) { alert('Укажите email для тестового письма'); return; }
+    await jpost('/api/admin/settings/smtp/test', { settings: smtpPayloadFromForm(), to });
+    alert('Тестовое письмо отправлено');
+  });
+}
 if (byId('btnSaveSettings')) {
   byId('btnSaveSettings').addEventListener('click', async () => {
     await jpost('/api/admin/settings', {
@@ -1148,8 +1231,8 @@ if (byId('policyBg')) byId('policyBg').addEventListener('click', (e) => { if (e.
 byId('btnBundle').addEventListener('click', () => downloadBundle(byId('bundleUser').value.trim()));
 byId('btnReissueBundle').addEventListener('click', () => downloadReissueBundle(byId('reissueUser').value.trim()));
 byId('btnUpsert').addEventListener('click', async () => {
-  await jpost('/api/admin/users', { username: byId('username').value.trim(), cert_serial: byId('certSerial').value.trim(), enabled: byId('enabled').value === 'true', profile: byId('userProfile') ? byId('userProfile').value : '' });
-  byId('username').value = ''; byId('certSerial').value = ''; if (byId('userProfile')) byId('userProfile').value = '';
+  await jpost('/api/admin/users', { username: byId('username').value.trim(), cert_serial: byId('certSerial').value.trim(), enabled: byId('enabled').value === 'true', profile: byId('userProfile') ? byId('userProfile').value : '', email: byId('userEmail') ? byId('userEmail').value.trim() : '', require_2fa: byId('userRequire2FA') ? byId('userRequire2FA').value === 'true' : false });
+  byId('username').value = ''; byId('certSerial').value = ''; if (byId('userProfile')) byId('userProfile').value = ''; if (byId('userEmail')) byId('userEmail').value = ''; if (byId('userRequire2FA')) byId('userRequire2FA').value = 'false';
   await loadAll();
 });
 byId('btnRefresh').addEventListener('click', loadAll);
@@ -1165,7 +1248,7 @@ if (byId('appsCategory')) byId('appsCategory').addEventListener('change', render
 localStorage.setItem('tlsctrl_api_base', API_BASE);
 syncApiBaseUI();
 renderPolicyPresetList(new Set());
-Promise.all([loadSettings().catch(() => {}), loadAll().catch(console.error)]).then(() => renderHealth());
+Promise.all([loadSettings().catch(() => {}), loadSMTPSettings().catch(() => {}), loadAll().catch(console.error)]).then(() => renderHealth());
 setInterval(() => { loadAll().catch(() => {}); }, 3000);
 
 if (byId('btnOpenProfileModal')) byId('btnOpenProfileModal').addEventListener('click', () => { resetProfileForm(); openProfileModal(false); });

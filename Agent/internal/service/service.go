@@ -72,7 +72,10 @@ func (s *Service) userMetaPath() string {
 }
 
 type userMeta struct {
-	Profile string `json:"profile,omitempty"`
+	Profile    string    `json:"profile,omitempty"`
+	Email      string    `json:"email,omitempty"`
+	Require2FA bool      `json:"require_2fa,omitempty"`
+	Last2FAAt  time.Time `json:"last_2fa_at,omitempty"`
 }
 
 type persistedUser struct {
@@ -272,7 +275,15 @@ func (s *Service) loadUserMeta() (map[string]userMeta, error) {
 	if out == nil {
 		out = map[string]userMeta{}
 	}
-	return out, nil
+	normalized := make(map[string]userMeta, len(out))
+	for k, v := range out {
+		key := normalizeUserMetaKey(k)
+		if key == "" {
+			continue
+		}
+		normalized[key] = v
+	}
+	return normalized, nil
 }
 
 func (s *Service) saveUserMeta(meta map[string]userMeta) error {
@@ -285,6 +296,42 @@ func (s *Service) saveUserMeta(meta map[string]userMeta) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+func normalizeUserMetaKey(username string) string {
+	return strings.ToLower(strings.TrimSpace(username))
+}
+
+func getUserMeta(meta map[string]userMeta, username string) userMeta {
+	if len(meta) == 0 {
+		return userMeta{}
+	}
+	key := normalizeUserMetaKey(username)
+	if key != "" {
+		if v, ok := meta[key]; ok {
+			return v
+		}
+	}
+	trimmed := strings.TrimSpace(username)
+	if trimmed != "" {
+		if v, ok := meta[trimmed]; ok {
+			return v
+		}
+	}
+	for k, v := range meta {
+		if strings.EqualFold(strings.TrimSpace(k), trimmed) {
+			return v
+		}
+	}
+	return userMeta{}
+}
+
+func setUserMeta(meta map[string]userMeta, username string, value userMeta) {
+	key := normalizeUserMetaKey(username)
+	if key == "" {
+		return
+	}
+	meta[key] = value
 }
 
 func (s *Service) profileExists(name string) bool {
@@ -309,7 +356,7 @@ func (s *Service) userProfile(username string) string {
 	if err != nil {
 		return "default"
 	}
-	if v, ok := meta[username]; ok && strings.TrimSpace(v.Profile) != "" {
+	if v := getUserMeta(meta, username); strings.TrimSpace(v.Profile) != "" {
 		return v.Profile
 	}
 	return "default"
@@ -323,7 +370,9 @@ func (s *Service) setUserProfile(username, profile string) error {
 	if strings.TrimSpace(profile) == "" {
 		profile = "default"
 	}
-	meta[username] = userMeta{Profile: profile}
+	m := getUserMeta(meta, username)
+	m.Profile = profile
+	setUserMeta(meta, username, m)
 	return s.saveUserMeta(meta)
 }
 
@@ -332,7 +381,14 @@ func (s *Service) deleteUserProfile(username string) error {
 	if err != nil {
 		return err
 	}
-	delete(meta, username)
+	key := normalizeUserMetaKey(username)
+	m := getUserMeta(meta, username)
+	m.Profile = ""
+	if strings.TrimSpace(m.Email) == "" && !m.Require2FA && m.Last2FAAt.IsZero() {
+		delete(meta, key)
+	} else {
+		meta[key] = m
+	}
 	return s.saveUserMeta(meta)
 }
 
@@ -668,13 +724,22 @@ func (s *Service) Users(ctx context.Context) ([]model.User, error) {
 			}
 			users[i].Enabled = pu.Enabled
 		}
-		if m, ok := meta[users[i].Username]; ok && strings.TrimSpace(m.Profile) != "" {
-			users[i].Profile = m.Profile
-		} else if pu, ok := persisted[users[i].Username]; ok && strings.TrimSpace(pu.Profile) != "" {
-			users[i].Profile = pu.Profile
-		} else if strings.TrimSpace(users[i].Profile) == "" {
-			users[i].Profile = "default"
+		if m := getUserMeta(meta, users[i].Username); m != (userMeta{}) {
+			if strings.TrimSpace(m.Profile) != "" {
+				users[i].Profile = m.Profile
+			}
+			users[i].Email = strings.TrimSpace(m.Email)
+			users[i].Require2FA = m.Require2FA
+			users[i].Last2FAAt = m.Last2FAAt
 		}
+		if strings.TrimSpace(users[i].Profile) == "" {
+			if pu, ok := persisted[users[i].Username]; ok && strings.TrimSpace(pu.Profile) != "" {
+				users[i].Profile = pu.Profile
+			} else {
+				users[i].Profile = "default"
+			}
+		}
+		users[i].TwoFAStatus = normalizeTwoFAStatus(users[i].Require2FA, !users[i].Last2FAAt.IsZero())
 	}
 	for username, pu := range persisted {
 		if seen[username] {
@@ -684,12 +749,17 @@ func (s *Service) Users(ctx context.Context) ([]model.User, error) {
 		if profile == "" {
 			profile = "default"
 		}
+		m := getUserMeta(meta, username)
 		users = append(users, model.User{
-			Username:   username,
-			CertSerial: pu.CertSerial,
-			Enabled:    pu.Enabled,
-			Profile:    profile,
-			UpdatedAt:  pu.UpdatedAt,
+			Username:    username,
+			CertSerial:  pu.CertSerial,
+			Enabled:     pu.Enabled,
+			Profile:     profile,
+			Email:       strings.TrimSpace(m.Email),
+			Require2FA:  m.Require2FA,
+			Last2FAAt:   m.Last2FAAt,
+			TwoFAStatus: normalizeTwoFAStatus(m.Require2FA, !m.Last2FAAt.IsZero()),
+			UpdatedAt:   pu.UpdatedAt,
 		})
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
@@ -706,6 +776,19 @@ func (s *Service) Sessions(ctx context.Context) ([]model.Session, error) {
 	if err != nil {
 		log.Printf("service Sessions failed ms=%d error=%v", sinceMs(start), err)
 		return nil, err
+	}
+	meta, _ := s.loadUserMeta()
+	for i := range sessions {
+		m := getUserMeta(meta, sessions[i].Username)
+		sessions[i].Email = strings.TrimSpace(m.Email)
+		sessions[i].Require2FA = m.Require2FA
+		passed := false
+		if !m.Last2FAAt.IsZero() {
+			passed = sessions[i].ConnectedAt.IsZero() || !m.Last2FAAt.Before(sessions[i].ConnectedAt.Add(-30*time.Second))
+			sessions[i].TwoFAAt = m.Last2FAAt
+		}
+		sessions[i].TwoFAPassed = passed
+		sessions[i].TwoFAStatus = normalizeTwoFAStatus(m.Require2FA, passed)
 	}
 	latestViolations, err := s.latestPolicyViolationsByUser()
 	if err != nil {
@@ -742,12 +825,19 @@ func (s *Service) Sessions(ctx context.Context) ([]model.Session, error) {
 				}
 				continue
 			}
+			m := getUserMeta(meta, username)
+			passed := !m.Last2FAAt.IsZero()
 			sessions = append(sessions, model.Session{
 				Username:          username,
 				Connected:         false,
 				LastSeen:          v.OccurredAt,
 				AppsCount:         len(v.MatchedApps),
 				Source:            "policy_deny",
+				Email:             strings.TrimSpace(m.Email),
+				Require2FA:        m.Require2FA,
+				TwoFAPassed:       passed,
+				TwoFAStatus:       normalizeTwoFAStatus(m.Require2FA, passed),
+				TwoFAAt:           m.Last2FAAt,
 				PolicyBlocked:     true,
 				PolicyBlockedAt:   v.OccurredAt,
 				PolicyName:        v.PolicyName,

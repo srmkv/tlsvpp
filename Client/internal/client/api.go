@@ -91,6 +91,8 @@ const (
 	VPNFramePath                = "/api/client/vpn-frame"
 	VPNPollPath                 = "/api/client/vpn-poll"
 	VPNStreamPath               = "/api/client/vpn-stream"
+	VPN2FAVerifyPath            = "/api/client/2fa/verify"
+	VPN2FAResendPath            = "/api/client/2fa/resend"
 	policyBootstrapDefaultPath  = "/api/client/policy-bootstrap"
 	policyBootstrapFallbackPath = ""
 	policyViolationDefaultPath  = "/api/client/policy-violation"
@@ -272,6 +274,13 @@ func HumanizeError(err error) string {
 
 type vpnBindResponse struct {
 	OK            bool   `json:"ok"`
+	Status        string `json:"status,omitempty"`
+	Required      bool   `json:"required,omitempty"`
+	ChallengeID   string `json:"challenge_id,omitempty"`
+	Method        string `json:"method,omitempty"`
+	MaskedEmail   string `json:"masked_email,omitempty"`
+	TTLSeconds    int    `json:"ttl_seconds,omitempty"`
+	BindNonce     string `json:"bind_nonce,omitempty"`
 	TunnelID      uint64 `json:"tunnel_id"`
 	AssignedIP    string `json:"assigned_ip"`
 	Gateway       string `json:"gateway"`
@@ -282,6 +291,28 @@ type vpnBindResponse struct {
 	MTU           uint16 `json:"mtu"`
 	MSS           uint16 `json:"mss"`
 	LeaseSeconds  uint32 `json:"lease_seconds"`
+}
+
+type TwoFAChallenge struct {
+	Username    string
+	Profile     string
+	ClientIP    string
+	ChallengeID string
+	Method      string
+	MaskedEmail string
+	TTLSeconds  int
+	BindNonce   string
+}
+
+type TwoFARequiredError struct {
+	Challenge TwoFAChallenge
+}
+
+func (e *TwoFARequiredError) Error() string {
+	if strings.TrimSpace(e.Challenge.MaskedEmail) != "" {
+		return "Требуется код подтверждения из письма, отправленного на " + strings.TrimSpace(e.Challenge.MaskedEmail)
+	}
+	return "Требуется код подтверждения из электронной почты"
 }
 
 type vpnFrameResponse struct {
@@ -850,6 +881,58 @@ func dataplaneShouldStop() bool {
 	return activeStopping
 }
 
+func applyConnectedReply(cfg state.Config, httpClient *http.Client, tr *http.Transport, reply vpnBindResponse) (model.ClientSession, error) {
+	applier := newRuntimeApplier()
+	if _, err := applier.Apply(context.Background(), runtimeApplyInput{
+		AssignedIP:    reply.AssignedIP,
+		Gateway:       reply.Gateway,
+		DNSServers:    reply.DNSServers,
+		IncludeRoutes: reply.IncludeRoutes,
+		ExcludeRoutes: reply.ExcludeRoutes,
+		FullTunnel:    reply.FullTunnel,
+		MTU:           int(reply.MTU),
+	}); err != nil {
+		tr.CloseIdleConnections()
+		return model.ClientSession{}, fmt.Errorf("Подключение: не удалось настроить локальный VPN-интерфейс: %s", HumanizeError(err))
+	}
+	osType, osVersion := system.DetectOSInfo()
+	now := time.Now().UTC().Format(time.RFC3339)
+	session := model.ClientSession{
+		Username:     strings.TrimSpace(cfg.Username),
+		Profile:      strings.TrimSpace(firstNonEmpty(cfg.Profile, "default")),
+		SystemUser:   system.DetectSystemUser(),
+		OSType:       osType,
+		OSVersion:    osVersion,
+		SystemUptime: system.DetectSystemUptime(),
+		IP:           empty(reply.AssignedIP),
+		MAC:          empty(system.DetectPrimaryMAC()),
+		Status:       "connected",
+		ConnectedAt:  now,
+		LastSeen:     now,
+		Source:       "mtls-vpn",
+		TunnelID:     reply.TunnelID,
+		Gateway:      reply.Gateway,
+		DNSServers:   reply.DNSServers,
+		MTU:          reply.MTU,
+		MSS:          reply.MSS,
+		LeaseSeconds: reply.LeaseSeconds,
+		FullTunnel:   reply.FullTunnel,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	setCurrentSession(session, httpClient, tr, applier, cancel, cfg.ServerURL)
+	startDataplane(ctx, cfg, session, applier, httpClient)
+	return session, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 func ConnectVPN(cfg state.Config) (model.ClientSession, error) {
 	activeOpMu.Lock()
 	defer activeOpMu.Unlock()
@@ -896,60 +979,120 @@ func connectVPNLocked(cfg state.Config) (model.ClientSession, error) {
 		return model.ClientSession{}, readableRequestError("Подключение", err)
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return model.ClientSession{}, readableHTTPError("Подключение", resp.StatusCode, resp.Status, body, "Сервер отклонил подключение")
 	}
 	var reply vpnBindResponse
-	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
-		return model.ClientSession{}, fmt.Errorf("Подключение: не удалось разобрать ответ сервера")
+	if err := decodeJSONWithTextFallback(body, &reply); err != nil {
+		return model.ClientSession{}, fmt.Errorf("Подключение: %w", err)
+	}
+	if reply.Required || strings.EqualFold(strings.TrimSpace(reply.Status), "2fa_required") || strings.TrimSpace(reply.ChallengeID) != "" {
+		tr.CloseIdleConnections()
+		return model.ClientSession{}, &TwoFARequiredError{Challenge: TwoFAChallenge{
+			Username:    strings.TrimSpace(cfg.Username),
+			Profile:     profile,
+			ClientIP:    fmt.Sprint(payload["client_ip"]),
+			ChallengeID: strings.TrimSpace(reply.ChallengeID),
+			Method:      strings.TrimSpace(firstNonEmpty(reply.Method, "email")),
+			MaskedEmail: strings.TrimSpace(reply.MaskedEmail),
+			TTLSeconds:  reply.TTLSeconds,
+			BindNonce:   strings.TrimSpace(reply.BindNonce),
+		}}
 	}
 	if !reply.OK {
 		return model.ClientSession{}, fmt.Errorf("Подключение: сервер не подтвердил создание VPN-сессии")
 	}
+	return applyConnectedReply(cfg, httpClient, tr, reply)
+}
 
-	applier := newRuntimeApplier()
-	if _, err := applier.Apply(context.Background(), runtimeApplyInput{
-		AssignedIP:    reply.AssignedIP,
-		Gateway:       reply.Gateway,
-		DNSServers:    reply.DNSServers,
-		IncludeRoutes: reply.IncludeRoutes,
-		ExcludeRoutes: reply.ExcludeRoutes,
-		FullTunnel:    reply.FullTunnel,
-		MTU:           int(reply.MTU),
-	}); err != nil {
+func CompleteEmail2FA(cfg state.Config, challenge TwoFAChallenge, code string) (model.ClientSession, error) {
+	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 15*time.Second)
+	if err != nil {
+		return model.ClientSession{}, err
+	}
+	payload := map[string]any{
+		"username":     strings.TrimSpace(challenge.Username),
+		"profile":      strings.TrimSpace(firstNonEmpty(challenge.Profile, cfg.Profile, "default")),
+		"client_ip":    strings.TrimSpace(firstNonEmpty(challenge.ClientIP, detectPrimaryIP(), "0.0.0.0")),
+		"challenge_id": strings.TrimSpace(challenge.ChallengeID),
+		"code":         strings.TrimSpace(code),
+		"bind_nonce":   strings.TrimSpace(challenge.BindNonce),
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return model.ClientSession{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, VPN2FAVerifyPath), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return model.ClientSession{}, readableRequestError("Подтверждение кода", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyClientHeaders(req)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return model.ClientSession{}, readableRequestError("Подтверждение кода", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if resp.StatusCode != http.StatusOK {
 		tr.CloseIdleConnections()
-		return model.ClientSession{}, fmt.Errorf("Подключение: не удалось настроить локальный VPN-интерфейс: %s", HumanizeError(err))
+		return model.ClientSession{}, readableHTTPError("Подтверждение кода", resp.StatusCode, resp.Status, body, "Код подтверждения отклонён")
 	}
-
-	osType, osVersion := system.DetectOSInfo()
-	now := time.Now().UTC().Format(time.RFC3339)
-	session := model.ClientSession{
-		Username:     strings.TrimSpace(cfg.Username),
-		Profile:      profile,
-		SystemUser:   system.DetectSystemUser(),
-		OSType:       osType,
-		OSVersion:    osVersion,
-		SystemUptime: system.DetectSystemUptime(),
-		IP:           empty(reply.AssignedIP),
-		MAC:          empty(system.DetectPrimaryMAC()),
-		Status:       "connected",
-		ConnectedAt:  now,
-		LastSeen:     now,
-		Source:       "mtls-vpn",
-		TunnelID:     reply.TunnelID,
-		Gateway:      reply.Gateway,
-		DNSServers:   reply.DNSServers,
-		MTU:          reply.MTU,
-		MSS:          reply.MSS,
-		LeaseSeconds: reply.LeaseSeconds,
-		FullTunnel:   reply.FullTunnel,
+	var reply vpnBindResponse
+	if err := decodeJSONWithTextFallback(body, &reply); err != nil {
+		tr.CloseIdleConnections()
+		return model.ClientSession{}, fmt.Errorf("Подтверждение кода: %w", err)
 	}
+	if !reply.OK {
+		tr.CloseIdleConnections()
+		return model.ClientSession{}, fmt.Errorf("Подтверждение кода: сервер не подтвердил создание VPN-сессии")
+	}
+	return applyConnectedReply(cfg, httpClient, tr, reply)
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	setCurrentSession(session, httpClient, tr, applier, cancel, cfg.ServerURL)
-	startDataplane(ctx, cfg, session, applier, httpClient)
-	return session, nil
+func ResendEmail2FA(cfg state.Config, challenge TwoFAChallenge) (TwoFAChallenge, error) {
+	httpClient, tr, err := newPersistentMTLSHTTPClient(cfg, 10*time.Second)
+	if err != nil {
+		return challenge, err
+	}
+	defer tr.CloseIdleConnections()
+	bodyBytes, err := json.Marshal(map[string]any{"challenge_id": strings.TrimSpace(challenge.ChallengeID)})
+	if err != nil {
+		return challenge, err
+	}
+	req, err := http.NewRequest(http.MethodPost, joinURL(cfg.ServerURL, VPN2FAResendPath), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return challenge, readableRequestError("Повторная отправка кода", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyClientHeaders(req)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return challenge, readableRequestError("Повторная отправка кода", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if resp.StatusCode != http.StatusOK {
+		return challenge, readableHTTPError("Повторная отправка кода", resp.StatusCode, resp.Status, body, "Не удалось повторно отправить код")
+	}
+	var out struct {
+		OK          bool   `json:"ok"`
+		MaskedEmail string `json:"masked_email,omitempty"`
+		TTLSeconds  int    `json:"ttl_seconds,omitempty"`
+	}
+	if err := decodeJSONWithTextFallback(body, &out); err != nil {
+		return challenge, err
+	}
+	if out.OK {
+		if strings.TrimSpace(out.MaskedEmail) != "" {
+			challenge.MaskedEmail = strings.TrimSpace(out.MaskedEmail)
+		}
+		if out.TTLSeconds > 0 {
+			challenge.TTLSeconds = out.TTLSeconds
+		}
+	}
+	return challenge, nil
 }
 
 func FetchSelfSession(cfg state.Config) (model.ClientSession, error) {
