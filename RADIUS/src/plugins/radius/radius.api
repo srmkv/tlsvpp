@@ -1,0 +1,84 @@
+option version = "0.1.0";
+
+service {
+  rpc radius_provider_set returns radius_provider_set_reply;
+  rpc radius_provider_dump returns stream radius_provider_details;
+  rpc radius_test_auth returns radius_test_auth_reply;
+  rpc radius_stats_dump returns radius_stats_dump_reply;
+};
+
+autoreply define radius_provider_set
+{
+  option status="in_progress";
+  u32 client_index;
+  u32 context;
+  string name[64];
+  u8 ip4[4];
+  u8 src_ip4[4];
+  u32 fib_index;
+  u32 sw_if_index;
+  u16 port;
+  u16 timeout_sec;
+  u16 retries;
+  string secret[128];
+  string nas_id[128];
+  u8 enabled;
+};
+
+define radius_provider_dump
+{
+  u32 client_index;
+  u32 context;
+};
+
+define radius_provider_details
+{
+  u32 context;
+  string name[64];
+  u8 ip4[4];
+  u8 src_ip4[4];
+  u32 fib_index;
+  u32 sw_if_index;
+  u16 port;
+  u16 timeout_sec;
+  u16 retries;
+  string secret[128];
+  string nas_id[128];
+  u8 enabled;
+};
+
+define radius_test_auth
+{
+  u32 client_index;
+  u32 context;
+  string provider_name[64];
+  string username[128];
+  string password[128];
+};
+
+define radius_test_auth_reply
+{
+  u32 context;
+  i32 retval;
+  u32 result_code;
+  string reply_message[256];
+};
+
+define radius_stats_dump
+{
+  u32 client_index;
+  u32 context;
+};
+
+define radius_stats_dump_reply
+{
+  u32 context;
+  i32 retval;
+  u64 requests;
+  u64 accepts;
+  u64 rejects;
+  u64 challenges;
+  u64 timeouts;
+  u64 errors;
+  u64 pending;
+};

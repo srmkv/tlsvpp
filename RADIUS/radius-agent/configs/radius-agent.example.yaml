@@ -1,0 +1,12 @@
+listen_addr: ":9190"
+data_dir: "./agent-data"
+
+sqlite:
+  path: "./agent-data/radius-agent.db"
+
+sync:
+  default_interval_sec: 60
+
+controlplane:
+  api_base: "http://127.0.0.1:9080"
+  token: ""
