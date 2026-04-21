@@ -1,0 +1,65 @@
+# FreeRADIUS authorize file — тестовая конфигурация
+# Путь на сервере: /etc/freeradius/3.0/mods-config/files/authorize
+#
+# Группы и соответствующие VPN-профили в tlsagent:
+#   vpn-full          →  default         (full-tunnel, весь трафик через VPN)
+#   vpn-split         →  split-internal  (split-tunnel, только 10.0.0.0/8)
+#   vpn-restricted    →  restricted-host (только 192.17.0.5/32)
+#   vpn-admin         →  admin           (full-tunnel, приоритетный)
+#   vpn-disabled      →  (заблокированы)
+#
+# Синтаксис:
+#   username    Оператор := "значение"
+#               Reply-Attribute = "значение"
+#
+# Операторы проверки: := (присвоить), == (сравнить), =~ (regex)
+# Атрибуты ответа:   = (добавить), := (заменить), += (добавить к списку)
+
+# ─── Группы (radgroupcheck / radgroupreply) ─────────────────────────────────
+# В flat-file группы назначаются через Filter-Id в ответе пользователю.
+# В SQL — через radusergroup + radgroupreply.
+
+# ─── Пользователи ────────────────────────────────────────────────────────────
+
+# alice — full-tunnel VPN (весь трафик через VPN)
+alice   Cleartext-Password := "alice-pass-2024"
+        Filter-Id = "vpn-full",
+        Reply-Message = "Welcome Alice — full tunnel"
+
+# bob — split-tunnel, только внутренняя сеть 10.0.0.0/8
+bob     Cleartext-Password := "bob-pass-2024"
+        Filter-Id = "vpn-split",
+        Reply-Message = "Welcome Bob — internal network only"
+
+# charlie — restricted, доступ ТОЛЬКО к 192.17.0.5
+charlie Cleartext-Password := "charlie-pass-2024"
+        Filter-Id = "vpn-restricted",
+        Reply-Message = "Welcome Charlie — restricted host only"
+
+# diana — admin, full-tunnel + расширенные права
+diana   Cleartext-Password := "diana-pass-2024"
+        Filter-Id = "vpn-admin",
+        Filter-Id += "vpn-full",
+        Reply-Message = "Welcome Diana — admin access"
+
+# eve — пользователь заблокирован
+eve     Auth-Type := Reject
+        Reply-Message = "Account disabled"
+
+# frank — split-tunnel, несколько групп
+frank   Cleartext-Password := "frank-pass-2024"
+        Filter-Id = "vpn-split",
+        Filter-Id += "vpn-restricted",
+        Session-Timeout = "28800",
+        Idle-Timeout = "3600",
+        Reply-Message = "Welcome Frank — 8h session"
+
+# guest — restricted, временный доступ
+guest   Cleartext-Password := "guest-temp-2024"
+        Filter-Id = "vpn-restricted",
+        Session-Timeout = "3600",
+        Reply-Message = "Welcome Guest — 1h restricted"
+
+# DEFAULT — всем неизвестным пользователям отказать
+DEFAULT Auth-Type := Reject
+        Reply-Message = "User not found or not authorized for VPN"

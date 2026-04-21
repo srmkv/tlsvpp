@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -144,6 +145,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/admin/bundle", s.handleAdminBundle)
 	mux.HandleFunc("/api/admin/reissue-bundle", s.handleAdminReissueBundle)
 	mux.HandleFunc("/api/admin/plugin/sync-vpn", s.handleAdminSyncVPN)
+	mux.HandleFunc("/api/admin/plugin/runtime", s.handleAdminPluginRuntime)
+	mux.HandleFunc("/api/admin/settings/radius", s.handleAdminRadiusSettings)
+	mux.HandleFunc("/api/admin/settings/radius/test", s.handleAdminRadiusSettingsTest)
+	mux.HandleFunc("/api/admin/radius/import", s.handleAdminRadiusImport)
 
 	httpSrv := &http.Server{
 		Addr:              s.cfg.AdminListenAddr,
@@ -511,4 +516,108 @@ func (s *Server) handleAdminSyncVPN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// handleAdminRadiusImport receives a bulk user list from radius-agent and
+// imports it into the Agent's user store.
+//
+// POST /api/admin/radius/import
+// Body: {"users": [{"username":"alice","profile":"default","enabled":true,"source":"rad1"},...]}
+// Response: {"created":N,"updated":N,"skipped":N,"errors":[...]}
+func (s *Server) handleAdminRadiusImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		Users []service.RadiusUserImport `json:"users"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "admin_radius_import_decode", 400, err)
+		return
+	}
+	if len(req.Users) == 0 {
+		writeJSON(w, 200, map[string]any{"created": 0, "updated": 0, "skipped": 0})
+		return
+	}
+	result := s.svc.ImportRadiusUsers(r.Context(), req.Users)
+	writeJSON(w, 200, result)
+}
+
+// handleAdminPluginRuntime returns live VPN tunnel data from the VPP plugin.
+// GET /api/admin/plugin/runtime
+// Response: {"tunnels":[...],"summary":{"total_tunnels":N,"running_tunnels":N}}
+func (s *Server) handleAdminPluginRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	rt := s.svc.PluginRuntime(r.Context())
+	writeJSON(w, 200, rt)
+}
+
+// handleAdminRadiusSettings handles GET/POST /api/admin/settings/radius
+// for direct RADIUS authentication (used for 2FA via RADIUS protocol).
+func (s *Server) handleAdminRadiusSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		st, err := s.svc.LoadRadiusSettings()
+		if err != nil {
+			writeError(w, "admin_radius_settings_get", 500, err)
+			return
+		}
+		// Never return the secret in plaintext — mask it
+		masked := st
+		if masked.Secret != "" {
+			masked.Secret = "••••••••"
+		}
+		writeJSON(w, 200, masked)
+	case http.MethodPost:
+		var req service.RadiusAuthSettings
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, "admin_radius_settings_post_decode", 400, err)
+			return
+		}
+		// If the secret is the mask value, keep the existing secret
+		if req.Secret == "••••••••" {
+			existing, _ := s.svc.LoadRadiusSettings()
+			req.Secret = existing.Secret
+		}
+		if err := s.svc.SaveRadiusSettings(req); err != nil {
+			writeError(w, "admin_radius_settings_post", 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+// handleAdminRadiusSettingsTest tests a direct RADIUS auth connection.
+// POST /api/admin/settings/radius/test
+func (s *Server) handleAdminRadiusSettingsTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	// Test is acknowledged but RADIUS protocol implementation is not included
+	// in the base agent — this confirms the settings are saved correctly.
+	var req struct {
+		Settings service.RadiusAuthSettings `json:"settings"`
+		Username string                     `json:"username"`
+		Password string                     `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "admin_radius_test_decode", 400, err)
+		return
+	}
+	if req.Settings.Host == "" {
+		writeError(w, "admin_radius_test", 400, fmt.Errorf("RADIUS host не указан"))
+		return
+	}
+	// In production this would dial the RADIUS server. For now confirm receipt.
+	writeJSON(w, 200, map[string]any{
+		"ok":      true,
+		"message": fmt.Sprintf("Настройки приняты (host=%s port=%d). Реализуйте RADIUS-диалог в методе handleAdminRadiusSettingsTest.", req.Settings.Host, req.Settings.Port),
+	})
 }

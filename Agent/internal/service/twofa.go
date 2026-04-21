@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"tlsctrl-agent/internal/userstore"
 )
 
 type SMTPSettings struct {
@@ -418,20 +420,25 @@ func (s *Service) SendSMTPTest(ctx context.Context, req SMTPTestRequest) error {
 }
 
 func (s *Service) UpdateUser2FAConfig(username, email string, require2FA bool) error {
-	username = normalizeUserMetaKey(username)
+	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
 		return errors.New("username is required")
 	}
-	meta, err := s.loadUserMeta()
-	if err != nil {
-		return err
+	existing, _ := s.store.GetUser(context.Background(), username)
+	profile := strings.TrimSpace(existing.Profile)
+	if profile == "" {
+		profile = "default"
 	}
-	m := getUserMeta(meta, username)
-	m.Profile = strings.TrimSpace(firstNonEmpty2FA(m.Profile, s.userProfile(username), "default"))
-	m.Email = strings.TrimSpace(email)
-	m.Require2FA = require2FA
-	setUserMeta(meta, username, m)
-	return s.saveUserMeta(meta)
+	return s.store.UpsertUser(context.Background(), userstore.StoredUser{
+		Username:     username,
+		CertSerial:   existing.CertSerial,
+		Enabled:      existing.Enabled,
+		Profile:      profile,
+		Email:        strings.TrimSpace(email),
+		Require2FA:   require2FA,
+		Last2FAAt:    existing.Last2FAAt,
+		RadiusSource: existing.RadiusSource,
+	})
 }
 
 func firstNonEmpty2FA(values ...string) string {
@@ -455,36 +462,27 @@ func normalizeTwoFAStatus(require2FA, passed bool) string {
 }
 
 func (s *Service) markUser2FAPassed(username string, at time.Time) error {
-	username = normalizeUserMetaKey(username)
-	meta, err := s.loadUserMeta()
-	if err != nil {
-		return err
-	}
-	m := getUserMeta(meta, username)
-	m.Last2FAAt = at.UTC()
-	setUserMeta(meta, username, m)
-	return s.saveUserMeta(meta)
+	username = strings.ToLower(strings.TrimSpace(username))
+	existing, _ := s.store.GetUser(context.Background(), username)
+	existing.Last2FAAt = at.UTC()
+	return s.store.UpsertUser(context.Background(), existing)
 }
 
 func (s *Service) TwoFAStart(ctx context.Context, username, profile, clientIP string) (TwoFAStartReply, error) {
 	_ = ctx
 	origUsername := strings.TrimSpace(username)
-	username = normalizeUserMetaKey(username)
+	username = strings.ToLower(strings.TrimSpace(username))
 	profile = strings.TrimSpace(profile)
 	clientIP = strings.TrimSpace(clientIP)
 	if username == "" {
 		return TwoFAStartReply{}, errors.New("username is required")
 	}
-	meta, err := s.loadUserMeta()
-	if err != nil {
-		return TwoFAStartReply{}, err
-	}
-	m := getUserMeta(meta, username)
-	if !m.Require2FA {
-		log.Printf("service TwoFAStart bypass username=%q normalized=%q require2FA=%v email=%q", origUsername, username, m.Require2FA, strings.TrimSpace(m.Email))
+	su, _ := s.store.GetUser(ctx, username)
+	if !su.Require2FA {
+		log.Printf("service TwoFAStart bypass username=%q require2FA=%v email=%q", origUsername, su.Require2FA, strings.TrimSpace(su.Email))
 		return TwoFAStartReply{OK: true, Status: "ok", Required: false}, nil
 	}
-	if strings.TrimSpace(m.Email) == "" {
+	if strings.TrimSpace(su.Email) == "" {
 		return TwoFAStartReply{}, errors.New("email for 2FA is not configured")
 	}
 	st, err := s.LoadSMTPSettings()
@@ -508,7 +506,7 @@ func (s *Service) TwoFAStart(ctx context.Context, username, profile, clientIP st
 	}
 	body := renderSMTPTemplate(st.BodyTemplate, origUsername, code, st.CodeTTLSeconds)
 	subject := renderSMTPTemplate(st.SubjectTemplate, origUsername, code, st.CodeTTLSeconds)
-	if err := sendSMTPMessage(st, m.Email, subject, body); err != nil {
+	if err := sendSMTPMessage(st, su.Email, subject, body); err != nil {
 		return TwoFAStartReply{}, err
 	}
 	all, err := s.loadChallenges()
@@ -519,10 +517,10 @@ func (s *Service) TwoFAStart(ctx context.Context, username, profile, clientIP st
 	all[challengeID] = TwoFAChallengeRecord{
 		ID:          challengeID,
 		Username:    origUsername,
-		Profile:     strings.TrimSpace(firstNonEmpty2FA(profile, m.Profile, "default")),
+		Profile:     strings.TrimSpace(firstNonEmpty2FA(profile, su.Profile, "default")),
 		ClientIP:    clientIP,
-		Email:       m.Email,
-		Masked:      maskEmail(m.Email),
+		Email:       su.Email,
+		Masked:      maskEmail(su.Email),
 		Code:        code,
 		BindNonce:   bindNonce,
 		CreatedAt:   now,
@@ -533,7 +531,7 @@ func (s *Service) TwoFAStart(ctx context.Context, username, profile, clientIP st
 	if err := s.saveChallenges(all); err != nil {
 		return TwoFAStartReply{}, err
 	}
-	return TwoFAStartReply{OK: true, Status: "2fa_required", Required: true, ChallengeID: challengeID, Method: "email", MaskedEmail: maskEmail(m.Email), TTLSeconds: st.CodeTTLSeconds, BindNonce: bindNonce}, nil
+	return TwoFAStartReply{OK: true, Status: "2fa_required", Required: true, ChallengeID: challengeID, Method: "email", MaskedEmail: maskEmail(su.Email), TTLSeconds: st.CodeTTLSeconds, BindNonce: bindNonce}, nil
 }
 
 func (s *Service) TwoFAResend(ctx context.Context, challengeID string) (TwoFAStartReply, error) {
@@ -582,7 +580,7 @@ func (s *Service) TwoFAResend(ctx context.Context, challengeID string) (TwoFASta
 func (s *Service) TwoFAVerify(ctx context.Context, username, profile, clientIP, challengeID, code, bindNonce string) (TwoFAVerifyResult, error) {
 	_ = ctx
 	origUsername := strings.TrimSpace(username)
-	username = normalizeUserMetaKey(username)
+	username = strings.ToLower(strings.TrimSpace(username))
 	challengeID = strings.TrimSpace(challengeID)
 	profile = strings.TrimSpace(profile)
 	clientIP = strings.TrimSpace(clientIP)
@@ -599,7 +597,7 @@ func (s *Service) TwoFAVerify(ctx context.Context, username, profile, clientIP, 
 	if !ok {
 		return TwoFAVerifyResult{}, errors.New("challenge not found")
 	}
-	if normalizeUserMetaKey(rec.Username) != username {
+	if strings.ToLower(strings.TrimSpace(rec.Username)) != username {
 		return TwoFAVerifyResult{}, errors.New("challenge does not belong to this user")
 	}
 	if profile != "" && rec.Profile != "" && !strings.EqualFold(rec.Profile, profile) {
@@ -636,3 +634,5 @@ func (s *Service) TwoFAVerify(ctx context.Context, username, profile, clientIP, 
 	}
 	return TwoFAVerifyResult{OK: true, Passed: true, Require2FA: true, Username: firstNonEmpty2FA(origUsername, rec.Username, username), Profile: firstNonEmpty2FA(profile, rec.Profile), PassedAt: now}, nil
 }
+
+

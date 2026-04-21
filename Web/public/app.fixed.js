@@ -261,12 +261,14 @@ async function loadRadiusSettings() {
     if (byId('radiusEnabled')) byId('radiusEnabled').value = st.enabled ? 'true' : 'false';
     if (byId('radiusHost')) byId('radiusHost').value = st.host || '';
     if (byId('radiusPort')) byId('radiusPort').value = st.port ? String(st.port) : '1812';
-    if (byId('radiusSecret')) byId('radiusSecret').value = st.secret || '';
+    // Secret is masked server-side - show placeholder if masked, not the mask string
+    if (byId('radiusSecret')) byId('radiusSecret').value = (st.secret && st.secret !== '••••••••') ? st.secret : '';
+    if (byId('radiusSecret') && st.secret === '••••••••') byId('radiusSecret').placeholder = '(сохранён, не отображается)';
     if (byId('radiusTimeout')) byId('radiusTimeout').value = st.timeout_seconds ? String(st.timeout_seconds) : '5';
     if (byId('radiusRetries')) byId('radiusRetries').value = st.retries ? String(st.retries) : '1';
     if (byId('radiusNASIdentifier')) byId('radiusNASIdentifier').value = st.nas_identifier || 'tlsctrl-agent';
-  } catch (e) {
-    console.warn('radius settings load failed', e);
+  } catch (_) {
+    // Endpoint may not be configured yet — silently ignore
   }
 }
 
@@ -290,6 +292,8 @@ function refreshProfileSelects() {
     byId('userProfile').innerHTML = options;
     if (profileNameList().includes(prev)) byId('userProfile').value = prev;
   }
+  // Also update the profile select inside the RADIUS group mapping form
+  refreshMappingProfileSelect();
 }
 function mergedRows() {
   const map = new Map();
@@ -1342,3 +1346,499 @@ window.addEventListener("resize", closeFloatingMenu);
 window.addEventListener("scroll", closeFloatingMenu, true);
 
 if (byId('policyPresetList')) byId('policyPresetList').addEventListener('change', (e) => { const item = e.target && e.target.closest ? e.target.closest('.presetItem') : null; if (item) item.classList.toggle('active', !!item.querySelector('input')?.checked); Array.from(document.querySelectorAll('.presetItem')).forEach((el) => { const cb = el.querySelector('input'); el.classList.toggle('active', !!cb?.checked); }); });
+
+// ═══════════════════════════════════════════════════════════════
+// RADIUS TAB
+// ═══════════════════════════════════════════════════════════════
+
+let RADIUS_BASE = '';
+let radiusSources = [];
+let radiusGroupMappings = [];
+
+function resolveInitialRadiusBase() {
+  try {
+    const saved = (localStorage.getItem('tlsctrl_radius_agent_base') || '').trim();
+    if (saved) return saved;
+    const detected = detectDefaultApiBase();
+    return detected.replace(':9080', ':9190');
+  } catch { return 'http://127.0.0.1:9190'; }
+}
+
+function syncRadiusBaseUI() {
+  if (byId('radiusAgentBase')) byId('radiusAgentBase').value = RADIUS_BASE;
+}
+
+function raGet(path) {
+  return fetch(normalizeBase(RADIUS_BASE) + path, { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+}
+function raPost(path, body) {
+  return fetch(normalizeBase(RADIUS_BASE) + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  }).then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.json(); });
+}
+
+async function checkRadiusAgentHealth() {
+  const pill = byId('radiusAgentHealth');
+  if (!RADIUS_BASE) { if (pill) { pill.className = 'healthPill warn'; pill.textContent = 'URL не указан'; } return false; }
+  try {
+    const h = await raGet('/healthz');
+    if (pill) { pill.className = 'healthPill ok'; pill.textContent = '✓ radius-agent доступен'; }
+    return !!h.ok;
+  } catch {
+    if (pill) { pill.className = 'healthPill warn'; pill.textContent = '✗ radius-agent недоступен'; }
+    return false;
+  }
+}
+
+async function loadRadiusSources() {
+  try {
+    const data = await raGet('/api/admin/radius/sources');
+    radiusSources = Array.isArray(data.items) ? data.items : [];
+  } catch { radiusSources = []; }
+  renderRadiusSources();
+  refreshRadiusSourceSelect();
+}
+
+function renderRadiusSources() {
+  const tbody = byId('radiusSourceRows');
+  if (!tbody) return;
+  if (!radiusSources.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Нет источников. Добавьте первый источник.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = radiusSources.map(src => {
+    const statusPill = src.enabled
+      ? '<span class="pill pillOk">Включён</span>'
+      : '<span class="pill pillMute">Выключен</span>';
+    return `<tr>
+      <td><div style="font-weight:800">${esc(src.id)}</div><div class="muted small">${esc(src.name || '')}</div></td>
+      <td><span class="mono">${esc(src.type || '—')}</span></td>
+      <td class="mono">${esc(String(src.sync_every_sec || 60))}s</td>
+      <td>${statusPill}</td>
+      <td><div class="actions">
+        <button class="iconBtn" data-ra-action="sync-source" data-src-id="${esc(src.id)}" title="Запустить sync">🔄</button>
+        <button class="iconBtn" data-ra-action="view-users" data-src-id="${esc(src.id)}" title="Просмотр пользователей">👥</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function refreshRadiusSourceSelect() {
+  const sel = byId('radiusResolveSource');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— выберите —</option>' +
+    radiusSources.map(s => `<option value="${esc(s.id)}">${esc(s.name || s.id)}</option>`).join('');
+}
+
+async function loadRadiusGroupMappings() {
+  try {
+    const data = await raGet('/api/admin/radius/mappings/groups');
+    radiusGroupMappings = Array.isArray(data.items) ? data.items : [];
+  } catch { radiusGroupMappings = []; }
+  renderRadiusGroupMappings();
+}
+
+function renderRadiusGroupMappings() {
+  const tbody = byId('radiusGroupMappingRows');
+  if (!tbody) return;
+  if (!radiusGroupMappings.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Нет маппингов.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = radiusGroupMappings.map((m, idx) => `<tr>
+    <td><span class="mono">${esc(m.group_name)}</span></td>
+    <td>${esc(m.vpn_profile || 'default')}</td>
+    <td>${m.enabled
+      ? '<span class="pill pillOk">Включён</span>'
+      : '<span class="pill pillMute">Выключен</span>'}</td>
+    <td><button class="iconBtn" data-ra-action="delete-mapping" data-mapping-idx="${idx}" title="Удалить">🗑️</button></td>
+  </tr>`).join('');
+}
+
+function refreshMappingProfileSelect() {
+  const sel = byId('newMappingProfile');
+  if (!sel) return;
+  const names = profileNameList();
+  sel.innerHTML = (names.length ? names : ['default'])
+    .map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+}
+
+async function saveGroupMappings(mappings) {
+  await raPost('/api/admin/radius/mappings/groups', mappings);
+  await loadRadiusGroupMappings();
+}
+
+async function syncSource(sourceId) {
+  const statusEl = byId('radiusSyncStatus');
+  if (statusEl) { statusEl.textContent = `Синхронизируем источник ${sourceId}…`; statusEl.className = 'emptyNote muted small'; }
+  try {
+    const snap = await raPost(`/api/admin/radius/sources/${sourceId}/sync`, {});
+    const msg = `✓ Источник ${sourceId} синхронизирован. Пользователей: ${snap?.diagnostics?.user_count ?? '?'}, групп: ${snap?.diagnostics?.group_count ?? '?'}.`;
+    if (statusEl) { statusEl.textContent = msg; statusEl.className = 'emptyNote'; }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = `✗ Ошибка sync ${sourceId}: ${e?.message || e}`; statusEl.className = 'emptyNote'; }
+    throw e;
+  }
+}
+
+async function syncAllAndPush() {
+  const statusEl = byId('radiusSyncStatus');
+  if (!radiusSources.length) { if (statusEl) statusEl.textContent = 'Нет источников для синхронизации.'; return; }
+  if (statusEl) { statusEl.textContent = 'Запускаем sync всех источников…'; statusEl.className = 'emptyNote muted small'; }
+  const results = [];
+  for (const src of radiusSources.filter(s => s.enabled)) {
+    try {
+      const snap = await raPost(`/api/admin/radius/sources/${src.id}/sync`, {});
+      results.push(`✓ ${src.id}: ${snap?.diagnostics?.user_count ?? '?'} пользователей`);
+    } catch (e) {
+      results.push(`✗ ${src.id}: ${e?.message || e}`);
+    }
+  }
+  if (statusEl) statusEl.textContent = results.join(' | ');
+}
+
+async function pushRadiusToAgent() {
+  const statusEl = byId('radiusSyncStatus');
+  if (statusEl) { statusEl.textContent = 'Собираем пользователей из radius-agent и отправляем в tlsagent…'; statusEl.className = 'emptyNote muted small'; }
+  try {
+    // Collect all users from all sources, resolve to profile via group mappings
+    const allUsers = [];
+    for (const src of radiusSources.filter(s => s.enabled)) {
+      try {
+        const data = await raGet(`/api/admin/radius/sources/${src.id}/users`);
+        const items = Array.isArray(data.items) ? data.items : [];
+        for (const u of items) {
+          // Resolve profile from group mappings
+          let profile = 'default';
+          for (const g of (u.groups || [])) {
+            const mapping = radiusGroupMappings.find(m => m.enabled && m.group_name.toLowerCase() === g.toLowerCase());
+            if (mapping && mapping.vpn_profile) { profile = mapping.vpn_profile; break; }
+          }
+          allUsers.push({ username: u.username, profile, enabled: !u.disabled, source: src.id });
+        }
+      } catch (e) {
+        console.warn('push: failed to load users from source', src.id, e);
+      }
+    }
+    if (!allUsers.length) {
+      if (statusEl) statusEl.textContent = 'Нет пользователей для отправки (синхронизируйте источники сначала).';
+      return;
+    }
+    const result = await jpost('/api/admin/radius/import', { users: allUsers });
+    const msg = `✓ Push завершён. Создано: ${result.created}, обновлено: ${result.updated}, пропущено: ${result.skipped}${result.errors?.length ? ', ошибок: ' + result.errors.length : ''}.`;
+    if (statusEl) { statusEl.textContent = msg; statusEl.className = 'emptyNote'; }
+    await loadAll();
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = `✗ Push не удался: ${e?.message || e}`; statusEl.className = 'emptyNote'; }
+  }
+}
+
+async function resolveRadiusUser() {
+  const sourceId = byId('radiusResolveSource')?.value || '';
+  const username = byId('radiusResolveUser')?.value?.trim() || '';
+  const resultEl = byId('radiusResolveResult');
+  if (!sourceId || !username) { alert('Укажите источник и имя пользователя'); return; }
+  if (!resultEl) return;
+  resultEl.style.display = 'block';
+  resultEl.innerHTML = '<div class="muted small">Запрашиваем…</div>';
+  try {
+    const policy = await raGet(`/api/admin/radius/resolve?source_id=${encodeURIComponent(sourceId)}&username=${encodeURIComponent(username)}`);
+    const groups = Array.isArray(policy.groups) ? policy.groups : [];
+    const tags = Array.isArray(policy.tags) ? policy.tags : [];
+    resultEl.innerHTML = `
+      <div class="grid2" style="gap:12px">
+        <div class="card" style="box-shadow:none;background:#f9fbfe">
+          <div class="muted tiny">Пользователь</div>
+          <div style="font-weight:800;margin-top:4px">${esc(policy.username || username)}</div>
+        </div>
+        <div class="card" style="box-shadow:none;background:#f9fbfe">
+          <div class="muted tiny">VPN профиль</div>
+          <div style="font-weight:800;margin-top:4px">${esc(policy.vpn_profile || '— (не маппирован)')}</div>
+        </div>
+        <div class="card" style="box-shadow:none;background:#f9fbfe">
+          <div class="muted tiny">Группы RADIUS</div>
+          <div style="margin-top:4px">${groups.length ? groups.map(g => `<span class="pill pillInfo">${esc(g)}</span> `).join('') : '<span class="muted">—</span>'}</div>
+        </div>
+        <div class="card" style="box-shadow:none;background:#f9fbfe">
+          <div class="muted tiny">Session timeout / Idle timeout</div>
+          <div style="margin-top:4px">${esc(String(policy.session_timeout || 0))}s / ${esc(String(policy.idle_timeout || 0))}s</div>
+        </div>
+        ${tags.length ? `<div class="card" style="box-shadow:none;background:#f9fbfe;grid-column:1/-1">
+          <div class="muted tiny">Теги / атрибуты</div>
+          <div style="margin-top:4px">${tags.map(t => `<span class="pill pillMute">${esc(t)}</span> `).join('')}</div>
+        </div>` : ''}
+      </div>`;
+  } catch (e) {
+    resultEl.innerHTML = `<div class="emptyNote" style="color:var(--bad)">✗ Пользователь не найден или ошибка: ${esc(e?.message || String(e))}</div>`;
+  }
+}
+
+async function viewSourceUsers(sourceId) {
+  try {
+    const data = await raGet(`/api/admin/radius/sources/${sourceId}/users`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const preview = items.slice(0, 20).map(u => `${u.username} [${(u.groups || []).join(', ') || '—'}]`).join('\n');
+    alert(`Источник ${sourceId}: ${items.length} пользователей\n\nПервые 20:\n${preview || '—'}`);
+  } catch (e) {
+    alert('Ошибка загрузки пользователей: ' + (e?.message || e));
+  }
+}
+
+// ─── Source Modal (proper form) ─────────────────────────────────────────────
+
+function openSourceModal() {
+  // Reset form
+  if (byId('srcId')) byId('srcId').value = '';
+  if (byId('srcName')) byId('srcName').value = '';
+  if (byId('srcEnabled')) byId('srcEnabled').value = 'true';
+  if (byId('srcSyncSec')) byId('srcSyncSec').value = '120';
+  if (byId('srcType')) byId('srcType').value = 'freeradius_sql';
+  if (byId('sqlEngine')) byId('sqlEngine').value = 'mysql';
+  if (byId('sqlHost')) byId('sqlHost').value = '';
+  if (byId('sqlPort')) byId('sqlPort').value = '';
+  if (byId('sqlUser')) byId('sqlUser').value = '';
+  if (byId('sqlPass')) byId('sqlPass').value = '';
+  if (byId('sqlDB')) byId('sqlDB').value = '';
+  if (byId('sqlitePath')) byId('sqlitePath').value = '';
+  if (byId('fileMode')) byId('fileMode').value = 'ssh';
+  if (byId('sshUser')) byId('sshUser').value = '';
+  if (byId('sshHost')) byId('sshHost').value = '';
+  if (byId('sshPort')) byId('sshPort').value = '';
+  if (byId('sshRemotePath')) byId('sshRemotePath').value = '/etc/freeradius/3.0/mods-config/files/authorize';
+  if (byId('sshKeyPath')) byId('sshKeyPath').value = '';
+  if (byId('sshTimeout')) byId('sshTimeout').value = '';
+  if (byId('localFilePath')) byId('localFilePath').value = '';
+  updateSourcePanels();
+  updateDSNPreview();
+  byId('sourceBg').style.display = 'flex';
+}
+
+function closeSourceModal() {
+  byId('sourceBg').style.display = 'none';
+}
+
+function updateSourcePanels() {
+  const type = byId('srcType')?.value || 'freeradius_sql';
+  const mode = byId('fileMode')?.value || 'ssh';
+  const engine = byId('sqlEngine')?.value || 'mysql';
+
+  const sqlPanel = byId('srcPanelSQL');
+  const filesPanel = byId('srcPanelFiles');
+  if (sqlPanel) sqlPanel.style.display = type === 'freeradius_sql' ? '' : 'none';
+  if (filesPanel) filesPanel.style.display = type === 'freeradius_files' ? '' : 'none';
+
+  const mysqlFields = byId('sqlMysqlFields');
+  const sqliteFields = byId('sqlSQLiteFields');
+  if (mysqlFields) mysqlFields.style.display = engine === 'sqlite' ? 'none' : '';
+  if (sqliteFields) sqliteFields.style.display = engine === 'sqlite' ? '' : 'none';
+
+  const sshFields = byId('fileSshFields');
+  const localFields = byId('fileLocalFields');
+  if (sshFields) sshFields.style.display = mode === 'ssh' ? '' : 'none';
+  if (localFields) localFields.style.display = mode === 'local' ? '' : 'none';
+
+  // Update ssh-copy-id hint when host/user changes
+  updateSSHCopyIdHint();
+}
+
+function updateSSHCopyIdHint() {
+  const hint = byId('sshCopyIdHint');
+  if (!hint) return;
+  const user = (byId('sshUser')?.value || '').trim();
+  const host = (byId('sshHost')?.value || '').trim();
+  const port = (byId('sshPort')?.value || '').trim();
+  if (!host) { hint.textContent = 'ssh-copy-id user@host'; return; }
+  const dest = (user ? user + '@' : '') + host;
+  const portStr = port && port !== '22' ? ` -p ${port}` : '';
+  hint.textContent = `ssh-copy-id${portStr} ${dest}`;
+}
+
+function buildDSN() {
+  const type = byId('srcType')?.value || 'freeradius_sql';
+  if (type === 'freeradius_sql') {
+    return buildSQLDSN();
+  } else {
+    return buildFilesDSN();
+  }
+}
+
+function buildSQLDSN() {
+  const engine = byId('sqlEngine')?.value || 'mysql';
+  if (engine === 'sqlite') {
+    return (byId('sqlitePath')?.value || '').trim();
+  }
+  const host = (byId('sqlHost')?.value || '').trim() || 'localhost';
+  const port = (byId('sqlPort')?.value || '').trim();
+  const user = (byId('sqlUser')?.value || '').trim();
+  const pass = byId('sqlPass')?.value || '';
+  const db = (byId('sqlDB')?.value || '').trim() || 'radius';
+  const auth = user ? (user + (pass ? ':' + pass : '') + '@') : '';
+  if (engine === 'postgres') {
+    const portStr = port ? ':' + port : '';
+    return `postgres://${auth}${host}${portStr}/${db}`;
+  }
+  // MySQL: user:pass@tcp(host:port)/db
+  const portPart = port || '3306';
+  return `${auth}tcp(${host}:${portPart})/${db}`;
+}
+
+function buildFilesDSN() {
+  const mode = byId('fileMode')?.value || 'ssh';
+  if (mode === 'local') {
+    return (byId('localFilePath')?.value || '').trim();
+  }
+  // SSH
+  const user = (byId('sshUser')?.value || '').trim();
+  const host = (byId('sshHost')?.value || '').trim();
+  const port = (byId('sshPort')?.value || '').trim();
+  const path = (byId('sshRemotePath')?.value || '').trim();
+  const key = (byId('sshKeyPath')?.value || '').trim();
+  const timeout = (byId('sshTimeout')?.value || '').trim();
+  if (!host) return '';
+  const portStr = (port && port !== '22') ? ':' + port : '';
+  const userStr = user ? user + '@' : '';
+  let dsn = `ssh://${userStr}${host}${portStr}${path}`;
+  const params = [];
+  if (key) params.push('key=' + encodeURIComponent(key));
+  if (timeout) params.push('timeout=' + encodeURIComponent(timeout));
+  if (params.length) dsn += '?' + params.join('&');
+  return dsn;
+}
+
+function updateDSNPreview() {
+  const dsn = buildDSN();
+  const type = byId('srcType')?.value || 'freeradius_sql';
+  const previewId = type === 'freeradius_files' ? 'filesDSNPreview' : 'sqlDSNPreview';
+  const el = byId(previewId);
+  if (el) el.textContent = dsn || '—';
+}
+
+// Source modal event listeners
+if (byId('sourceBg')) byId('sourceBg').addEventListener('click', e => { if (e.target === byId('sourceBg')) closeSourceModal(); });
+if (byId('btnCloseSourceModal')) byId('btnCloseSourceModal').addEventListener('click', closeSourceModal);
+if (byId('srcType')) byId('srcType').addEventListener('change', () => { updateSourcePanels(); updateDSNPreview(); });
+if (byId('sqlEngine')) byId('sqlEngine').addEventListener('change', () => { updateSourcePanels(); updateDSNPreview(); });
+if (byId('fileMode')) byId('fileMode').addEventListener('change', () => { updateSourcePanels(); updateDSNPreview(); });
+
+// Live DSN preview on any input change inside the modal
+['sqlHost','sqlPort','sqlUser','sqlPass','sqlDB','sqlitePath',
+ 'sshUser','sshHost','sshPort','sshRemotePath','sshKeyPath','sshTimeout','localFilePath'
+].forEach(id => {
+  const el = byId(id);
+  if (el) el.addEventListener('input', () => { updateDSNPreview(); updateSSHCopyIdHint(); });
+});
+
+// Auto-fill name from ID
+if (byId('srcId')) byId('srcId').addEventListener('input', () => {
+  if (byId('srcName') && !byId('srcName').value.trim()) {
+    byId('srcName').value = byId('srcId').value;
+  }
+});
+
+if (byId('btnSaveSource')) {
+  byId('btnSaveSource').addEventListener('click', async () => {
+    const id = (byId('srcId')?.value || '').trim();
+    if (!id) { alert('Укажите ID источника'); return; }
+    const name = (byId('srcName')?.value || '').trim() || id;
+    const type = byId('srcType')?.value || 'freeradius_sql';
+    const dsn = buildDSN();
+    if (!dsn) { alert('Заполните параметры подключения'); return; }
+    const syncSec = parseInt(byId('srcSyncSec')?.value || '120', 10) || 120;
+    const enabled = byId('srcEnabled')?.value === 'true';
+    try {
+      await raPost('/api/admin/radius/sources', { id, name, type, enabled, dsn, sync_every_sec: syncSec });
+      await loadRadiusSources();
+      closeSourceModal();
+      alert(`Источник ${id} добавлен`);
+    } catch (e) {
+      alert('Ошибка: ' + (e?.message || e));
+    }
+  });
+}
+
+// ── RADIUS Tab Event Listeners ──────────────────────────────────
+
+if (byId('btnRadiusAgentConnect')) {
+  byId('btnRadiusAgentConnect').addEventListener('click', async () => {
+    RADIUS_BASE = normalizeBase(byId('radiusAgentBase')?.value || '');
+    localStorage.setItem('tlsctrl_radius_agent_base', RADIUS_BASE);
+    const ok = await checkRadiusAgentHealth();
+    if (ok) {
+      await Promise.all([loadRadiusSources(), loadRadiusGroupMappings()]);
+    }
+  });
+}
+if (byId('radiusAgentBase')) {
+  byId('radiusAgentBase').addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') byId('btnRadiusAgentConnect')?.click();
+  });
+}
+if (byId('btnRefreshSources')) {
+  byId('btnRefreshSources').addEventListener('click', () => loadRadiusSources().catch(e => alert(e?.message || e)));
+}
+if (byId('btnOpenSourceModal')) {
+  byId('btnOpenSourceModal').addEventListener('click', () => openSourceModal());
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && byId('sourceBg') && byId('sourceBg').style.display === 'flex') closeSourceModal();
+});
+if (byId('btnRefreshGroupMappings')) {
+  byId('btnRefreshGroupMappings').addEventListener('click', () => loadRadiusGroupMappings().catch(e => alert(e?.message || e)));
+}
+if (byId('btnSaveGroupMapping')) {
+  byId('btnSaveGroupMapping').addEventListener('click', async () => {
+    const group = byId('newMappingGroup')?.value.trim();
+    const profile = byId('newMappingProfile')?.value || 'default';
+    const enabled = byId('newMappingEnabled')?.value === 'true';
+    if (!group) { alert('Введите имя группы RADIUS'); return; }
+    const existing = radiusGroupMappings.filter(m => m.group_name.toLowerCase() !== group.toLowerCase());
+    await saveGroupMappings([...existing, { group_name: group, vpn_profile: profile, policy_set: '', trust_level: '', enabled }]);
+    if (byId('newMappingGroup')) byId('newMappingGroup').value = '';
+  });
+}
+if (byId('btnAddGroupMapping')) {
+  byId('btnAddGroupMapping').addEventListener('click', () => {
+    byId('newMappingGroup')?.focus();
+  });
+}
+if (byId('btnSyncAllSources')) {
+  byId('btnSyncAllSources').addEventListener('click', () => syncAllAndPush().catch(console.error));
+}
+if (byId('btnPushToAgent')) {
+  byId('btnPushToAgent').addEventListener('click', () => pushRadiusToAgent().catch(console.error));
+}
+if (byId('btnRadiusResolve')) {
+  byId('btnRadiusResolve').addEventListener('click', () => resolveRadiusUser().catch(console.error));
+}
+
+// Delegated click for RA table actions
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-ra-action]');
+  if (!btn) return;
+  const action = btn.getAttribute('data-ra-action');
+  const srcId = btn.getAttribute('data-src-id') || '';
+  const mappingIdx = parseInt(btn.getAttribute('data-mapping-idx') ?? '-1', 10);
+  if (action === 'sync-source') {
+    syncSource(srcId).catch(err => alert('Ошибка sync: ' + (err?.message || err)));
+  }
+  if (action === 'view-users') {
+    viewSourceUsers(srcId).catch(console.error);
+  }
+  if (action === 'delete-mapping' && mappingIdx >= 0) {
+    if (!confirm('Удалить маппинг?')) return;
+    const updated = radiusGroupMappings.filter((_, i) => i !== mappingIdx);
+    saveGroupMappings(updated).catch(console.error);
+  }
+});
+
+// ── Init RADIUS tab ─────────────────────────────────────────────
+RADIUS_BASE = resolveInitialRadiusBase();
+syncRadiusBaseUI();
+// Silently try to connect on load
+checkRadiusAgentHealth().then(ok => {
+  if (ok) return Promise.all([loadRadiusSources(), loadRadiusGroupMappings()]);
+}).catch(() => {});
+
+// refreshMappingProfileSelect is called from within refreshProfileSelects itself

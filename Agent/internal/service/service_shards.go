@@ -2,31 +2,14 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"tlsctrl-agent/internal/model"
 )
-
-func (s *Service) shardsPath() string {
-	if s.pki == nil || strings.TrimSpace(s.pki.DataDir) == "" {
-		return filepath.Join(".", "agent-data", "shards.json")
-	}
-	return filepath.Join(s.pki.DataDir, "shards.json")
-}
-
-func (s *Service) shardPlacementsPath() string {
-	if s.pki == nil || strings.TrimSpace(s.pki.DataDir) == "" {
-		return filepath.Join(".", "agent-data", "shard_placements.json")
-	}
-	return filepath.Join(s.pki.DataDir, "shard_placements.json")
-}
 
 func normalizeShardNode(n model.ShardNode) model.ShardNode {
 	n.Name = strings.TrimSpace(n.Name)
@@ -43,7 +26,6 @@ func normalizeShardNode(n model.ShardNode) model.ShardNode {
 
 func (s *Service) implicitLocalShard() model.ShardNode {
 	settings, _ := s.CurrentSettings()
-	name := "local"
 	url := strings.TrimSpace(settings.ClientPublicURL)
 	serverName := strings.TrimSpace(settings.ServerName)
 	if url == "" && s.pki != nil {
@@ -53,125 +35,63 @@ func (s *Service) implicitLocalShard() model.ShardNode {
 		serverName = strings.TrimSpace(s.pki.ServerName)
 	}
 	return normalizeShardNode(model.ShardNode{
-		Name:            name,
-		ClientPublicURL: url,
-		ServerName:      serverName,
-		Enabled:         true,
-		Weight:          1,
-		UpdatedAt:       time.Now().UTC(),
+		Name: "local", ClientPublicURL: url, ServerName: serverName,
+		Enabled: true, Weight: 1, UpdatedAt: time.Now().UTC(),
 	})
 }
 
-func (s *Service) loadShards() ([]model.ShardNode, error) {
-	path := s.shardsPath()
-	if err := ensureDir(path); err != nil {
-		return nil, err
-	}
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		local := s.implicitLocalShard()
-		_ = s.saveShards([]model.ShardNode{local})
-		return []model.ShardNode{local}, nil
-	}
+// ensureShards seeds the implicit local shard if the store is empty.
+func (s *Service) ensureShards(ctx context.Context) ([]model.ShardNode, error) {
+	shards, err := s.store.ListShards(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []model.ShardNode
-	if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, err
-		}
-	}
-	if len(out) == 0 {
+	if len(shards) == 0 {
 		local := s.implicitLocalShard()
-		_ = s.saveShards([]model.ShardNode{local})
+		if uerr := s.store.UpsertShard(ctx, local); uerr != nil {
+			return nil, uerr
+		}
 		return []model.ShardNode{local}, nil
-	}
-	for i := range out {
-		out[i] = normalizeShardNode(out[i])
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
-}
-
-func (s *Service) saveShards(shards []model.ShardNode) error {
-	path := s.shardsPath()
-	if err := ensureDir(path); err != nil {
-		return err
 	}
 	for i := range shards {
 		shards[i] = normalizeShardNode(shards[i])
 	}
-	b, err := json.MarshalIndent(shards, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o600)
-}
-
-func (s *Service) loadShardPlacements() (map[string]model.ShardPlacement, error) {
-	path := s.shardPlacementsPath()
-	if err := ensureDir(path); err != nil {
-		return nil, err
-	}
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]model.ShardPlacement{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]model.ShardPlacement{}
-	if len(raw) == 0 {
-		return out, nil
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = map[string]model.ShardPlacement{}
-	}
-	return out, nil
-}
-
-func (s *Service) saveShardPlacements(m map[string]model.ShardPlacement) error {
-	path := s.shardPlacementsPath()
-	if err := ensureDir(path); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o600)
+	sort.Slice(shards, func(i, j int) bool { return shards[i].Name < shards[j].Name })
+	return shards, nil
 }
 
 func (s *Service) Shards(ctx context.Context) ([]model.ShardNodeView, error) {
-	shards, err := s.loadShards()
+	shards, err := s.ensureShards(ctx)
 	if err != nil {
 		return nil, err
 	}
-	placements, _ := s.loadShardPlacements()
+	placements, err := s.store.ListPlacements(ctx)
+	if err != nil {
+		return nil, err
+	}
 	sessions, _ := s.backend.ListSessions(ctx)
+
 	assigned := map[string]int{}
 	connected := map[string]int{}
+	placementMap := map[string]model.ShardPlacement{}
 	for _, p := range placements {
 		assigned[p.ShardName]++
+		placementMap[p.Username] = model.ShardPlacement{ShardName: p.ShardName}
 	}
 	for _, sess := range sessions {
 		if !sess.Connected {
 			continue
 		}
-		if p, ok := placements[sess.Username]; ok {
+		if p, ok := placementMap[sess.Username]; ok {
 			connected[p.ShardName]++
 		}
 	}
 	out := make([]model.ShardNodeView, 0, len(shards))
 	for _, sh := range shards {
 		out = append(out, model.ShardNodeView{
-			ShardNode:       sh,
-			AssignedUsers:   assigned[sh.Name],
-			ConnectedUsers:  connected[sh.Name],
+			ShardNode:      sh,
+			AssignedUsers:  assigned[sh.Name],
+			ConnectedUsers: connected[sh.Name],
 			EffectiveWeight: maxInt(1, sh.Weight),
 		})
 	}
@@ -186,7 +106,7 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func (s *Service) UpsertShard(_ context.Context, n model.ShardNode) error {
+func (s *Service) UpsertShard(ctx context.Context, n model.ShardNode) error {
 	n = normalizeShardNode(n)
 	if n.Name == "" {
 		return errors.New("shard name is required")
@@ -194,73 +114,63 @@ func (s *Service) UpsertShard(_ context.Context, n model.ShardNode) error {
 	if n.ClientPublicURL == "" {
 		return errors.New("client_public_url is required")
 	}
-	shards, err := s.loadShards()
-	if err != nil {
-		return err
-	}
-	updated := false
-	for i := range shards {
-		if strings.EqualFold(shards[i].Name, n.Name) {
-			shards[i] = n
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		shards = append(shards, n)
-	}
-	return s.saveShards(shards)
+	return s.store.UpsertShard(ctx, n)
 }
 
-func (s *Service) DeleteShard(_ context.Context, name string) error {
+func (s *Service) DeleteShard(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("shard name is required")
 	}
-	shards, err := s.loadShards()
+	shards, err := s.store.ListShards(ctx)
 	if err != nil {
 		return err
 	}
-	out := make([]model.ShardNode, 0, len(shards))
+	remaining := 0
 	for _, sh := range shards {
 		if !strings.EqualFold(sh.Name, name) {
-			out = append(out, sh)
+			remaining++
 		}
 	}
-	if len(out) == 0 {
+	if remaining == 0 {
 		return errors.New("cannot delete last shard")
 	}
-	if err := s.saveShards(out); err != nil {
+	if err := s.store.DeleteShard(ctx, name); err != nil {
 		return err
 	}
-	placements, err := s.loadShardPlacements()
+	// Remove placements pointing to deleted shard
+	placements, err := s.store.ListPlacements(ctx)
 	if err == nil {
-		for u, p := range placements {
+		for _, p := range placements {
 			if strings.EqualFold(p.ShardName, name) {
-				delete(placements, u)
+				_ = s.store.DeletePlacement(ctx, p.Username)
 			}
 		}
-		_ = s.saveShardPlacements(placements)
 	}
 	return nil
 }
 
 func (s *Service) chooseShardForUser(ctx context.Context, username string) (model.ShardNode, error) {
-	shards, err := s.loadShards()
+	shards, err := s.ensureShards(ctx)
 	if err != nil {
 		return model.ShardNode{}, err
 	}
-	placements, err := s.loadShardPlacements()
+	placements, err := s.store.ListPlacements(ctx)
 	if err != nil {
 		return model.ShardNode{}, err
 	}
-	if p, ok := placements[username]; ok {
-		for _, sh := range shards {
-			if strings.EqualFold(sh.Name, p.ShardName) && sh.Enabled && sh.ClientPublicURL != "" {
-				return sh, nil
+	// Check if user already has a valid placement
+	for _, p := range placements {
+		if strings.EqualFold(p.Username, username) {
+			for _, sh := range shards {
+				if strings.EqualFold(sh.Name, p.ShardName) && sh.Enabled && sh.ClientPublicURL != "" {
+					return sh, nil
+				}
 			}
+			break
 		}
 	}
+	// Pick shard with lowest assigned_users/weight score
 	assigned := map[string]int{}
 	for _, p := range placements {
 		assigned[p.ShardName]++
@@ -292,28 +202,22 @@ func (s *Service) chooseShardForUser(ctx context.Context, username string) (mode
 	})
 	chosen := cands[0].sh
 	now := time.Now().UTC()
-	placements[username] = model.ShardPlacement{
-		Username:        username,
-		ShardName:       chosen.Name,
-		ClientPublicURL: chosen.ClientPublicURL,
-		ServerName:      chosen.ServerName,
-		AssignedAt:      now,
-		UpdatedAt:       now,
-	}
-	if err := s.saveShardPlacements(placements); err != nil {
+	if err := s.store.SetPlacement(ctx, model.ShardPlacement{
+		Username: username, ShardName: chosen.Name,
+		ClientPublicURL: chosen.ClientPublicURL, ServerName: chosen.ServerName,
+		AssignedAt: now, UpdatedAt: now,
+	}); err != nil {
 		return model.ShardNode{}, err
 	}
-	_ = ctx
 	return chosen, nil
 }
 
-func (s *Service) placementForUser(username string) (model.ShardPlacement, bool) {
-	placements, err := s.loadShardPlacements()
+func (s *Service) placementForUser(ctx context.Context, username string) (model.ShardPlacement, bool) {
+	p, err := s.store.GetPlacement(ctx, strings.ToLower(strings.TrimSpace(username)))
 	if err != nil {
 		return model.ShardPlacement{}, false
 	}
-	p, ok := placements[username]
-	return p, ok
+	return p, true
 }
 
 func (s *Service) shardSummary(ctx context.Context) map[string]any {
@@ -321,9 +225,7 @@ func (s *Service) shardSummary(ctx context.Context) map[string]any {
 	if err != nil {
 		return map[string]any{"count": 0}
 	}
-	enabled := 0
-	assigned := 0
-	connected := 0
+	enabled, assigned, connected := 0, 0, 0
 	for _, v := range views {
 		if v.Enabled {
 			enabled++
@@ -332,11 +234,8 @@ func (s *Service) shardSummary(ctx context.Context) map[string]any {
 		connected += v.ConnectedUsers
 	}
 	return map[string]any{
-		"count":           len(views),
-		"enabled":         enabled,
-		"assigned_users":  assigned,
-		"connected_users": connected,
-		"nodes":           views,
+		"count": len(views), "enabled": enabled,
+		"assigned_users": assigned, "connected_users": connected, "nodes": views,
 	}
 }
 
@@ -345,36 +244,25 @@ func (s *Service) BundlePlacement(ctx context.Context, username string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	p, _ := s.placementForUser(strings.TrimSpace(username))
+	p, _ := s.placementForUser(ctx, strings.TrimSpace(username))
 	return map[string]any{
-		"username":          username,
-		"client_public_url": sh.ClientPublicURL,
-		"server_name":       sh.ServerName,
-		"assigned_shard":    sh.Name,
-		"placement":         p,
+		"username": username, "client_public_url": sh.ClientPublicURL,
+		"server_name": sh.ServerName, "assigned_shard": sh.Name, "placement": p,
 	}, nil
 }
 
-func (s *Service) updatePlacement(username string, sh model.ShardNode) error {
-	placements, err := s.loadShardPlacements()
-	if err != nil {
-		return err
-	}
+func (s *Service) updatePlacement(ctx context.Context, username string, sh model.ShardNode) error {
+	existing, _ := s.store.GetPlacement(ctx, username)
 	now := time.Now().UTC()
-	old := placements[username]
-	assignedAt := old.AssignedAt
-	if assignedAt.IsZero() || !strings.EqualFold(old.ShardName, sh.Name) {
+	assignedAt := existing.AssignedAt
+	if assignedAt.IsZero() || !strings.EqualFold(existing.ShardName, sh.Name) {
 		assignedAt = now
 	}
-	placements[username] = model.ShardPlacement{
-		Username:        username,
-		ShardName:       sh.Name,
-		ClientPublicURL: sh.ClientPublicURL,
-		ServerName:      sh.ServerName,
-		AssignedAt:      assignedAt,
-		UpdatedAt:       now,
-	}
-	return s.saveShardPlacements(placements)
+	return s.store.SetPlacement(ctx, model.ShardPlacement{
+		Username: username, ShardName: sh.Name,
+		ClientPublicURL: sh.ClientPublicURL, ServerName: sh.ServerName,
+		AssignedAt: assignedAt, UpdatedAt: now,
+	})
 }
 
 func (s *Service) issueBundleWithAutoPlacement(ctx context.Context, username, profile string) ([]byte, string, model.ShardNode, error) {
@@ -386,23 +274,10 @@ func (s *Service) issueBundleWithAutoPlacement(ctx context.Context, username, pr
 	if err != nil {
 		return nil, "", model.ShardNode{}, err
 	}
-	if err := s.updatePlacement(username, sh); err != nil {
+	if err := s.updatePlacement(ctx, username, sh); err != nil {
 		return nil, "", model.ShardNode{}, err
 	}
 	return bundle, serial, sh, nil
-}
-
-func (s *Service) deletePlacement(username string) {
-	placements, err := s.loadShardPlacements()
-	if err != nil {
-		return
-	}
-	delete(placements, username)
-	_ = s.saveShardPlacements(placements)
-}
-
-func (s *Service) reissueBundleWithAutoPlacement(ctx context.Context, username, profile string) ([]byte, string, model.ShardNode, error) {
-	return s.issueBundleWithAutoPlacement(ctx, username, profile)
 }
 
 func formatShardInfo(sh model.ShardNode) string {

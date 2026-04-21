@@ -92,7 +92,12 @@ func (s *Store) SaveSnapshot(ctx context.Context, sourceID string, snap *model.S
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO radius_snapshots(source_id,revision,created_at,payload_json) VALUES(?,?,datetime('now'),?)`, sourceID, snap.Revision, string(payload))
+	// INSERT OR IGNORE: the revision hash is derived from stable content, so
+	// if the revision already exists the data is identical — no need to re-store.
+	// This prevents unbounded table growth on unchanged RADIUS data.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO radius_snapshots(source_id,revision,created_at,payload_json) VALUES(?,?,datetime('now'),?)`,
+		sourceID, snap.Revision, string(payload))
 	return err
 }
 

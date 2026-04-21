@@ -26,4 +26,5 @@ type Client interface {
 	SetListenerConfig(ctx context.Context, listenAddr string, listenPort int, serverCertPEM, serverKeyPEM, caCertPEM string) error
 SetVPNPool(ctx context.Context, name, subnet, gateway string, leaseSeconds int) error
 SetVPNProfile(ctx context.Context, name, pool string, fullTunnel bool, dnsServers, includeRoutes, excludeRoutes string, mtu, mssClamp int) error
+ListVPNTunnels(ctx context.Context) ([]model.VPNTunnel, error)
 }

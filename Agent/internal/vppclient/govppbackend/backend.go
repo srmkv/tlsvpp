@@ -569,3 +569,46 @@ func (bkd *Backend) SetVPNProfile(ctx context.Context, name, pool string, fullTu
 		return err
 	})
 }
+
+func (bkd *Backend) ListVPNTunnels(ctx context.Context) ([]model.VPNTunnel, error) {
+	if bkd.verbose {
+		log.Printf("govpp request op=vpn-tunnel-dump")
+	}
+	var tunnels []model.VPNTunnel
+	err := bkd.withVPNConn(ctx, "vpn-tunnel-dump", func(ctx context.Context, vpnc tlsctrlvpn.RPCService) error {
+		stream, err := vpnc.TlsctrlVPNTunnelDump(ctx, &tlsctrlvpn.TlsctrlVPNTunnelDump{})
+		if err != nil {
+			return err
+		}
+		for {
+			detail, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				// Any other error — stop collecting
+				return err
+			}
+			t := model.VPNTunnel{
+				TunnelID:   detail.TunnelID,
+				Username:   str(detail.Username),
+				Profile:    str(detail.Profile),
+				AssignedIP: str(detail.AssignedIP),
+				ClientIP:   str(detail.ClientIP),
+				Running:    detail.Running,
+			}
+			if detail.LastSeenUnixNs > 0 {
+				t.LastSeen = nsToTime(detail.LastSeenUnixNs)
+			}
+			tunnels = append(tunnels, t)
+		}
+		return nil
+	})
+	if err != nil {
+		// Non-fatal: return empty list with error logged, not propagated,
+		// so the UI still works when VPP is unavailable.
+		log.Printf("govpp vpn-tunnel-dump error: %v", err)
+		return nil, nil
+	}
+	return tunnels, nil
+}

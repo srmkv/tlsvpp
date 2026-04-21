@@ -264,3 +264,20 @@ type AppPolicyDecision struct {
 	Matches       []AppPolicyMatch `json:"matches,omitempty"`
 	Policies      []AppPolicy      `json:"policies,omitempty"`
 }
+
+// VPNTunnel is a live VPN tunnel entry from the VPP plugin.
+type VPNTunnel struct {
+	TunnelID   uint32    `json:"tunnel_id"`
+	Username   string    `json:"username"`
+	Profile    string    `json:"profile"`
+	AssignedIP string    `json:"assigned_ip"`
+	ClientIP   string    `json:"client_ip"`
+	Running    bool      `json:"running"`
+	LastSeen   time.Time `json:"last_seen"`
+}
+
+// PluginRuntime is the response for GET /api/admin/plugin/runtime.
+type PluginRuntime struct {
+	Tunnels []VPNTunnel    `json:"tunnels"`
+	Summary map[string]any `json:"summary"`
+}

@@ -267,3 +267,23 @@ func (m *MemoryClient) SetVPNPool(ctx context.Context, name, subnet, gateway str
 func (m *MemoryClient) SetVPNProfile(ctx context.Context, name, pool string, fullTunnel bool, dnsServers, includeRoutes, excludeRoutes string, mtu, mssClamp int) error {
 	return nil
 }
+
+func (m *MemoryClient) ListVPNTunnels(_ context.Context) ([]model.VPNTunnel, error) {
+	// MemoryClient has no actual VPP plane — derive tunnels from live sessions.
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []model.VPNTunnel
+	for _, s := range m.sessions {
+		if !s.Connected {
+			continue
+		}
+		out = append(out, model.VPNTunnel{
+			Username:   s.Username,
+			AssignedIP: s.IP,
+			ClientIP:   s.IP,
+			Running:    true,
+			LastSeen:   s.LastSeen,
+		})
+	}
+	return out, nil
+}

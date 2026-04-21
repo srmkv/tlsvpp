@@ -5,7 +5,8 @@ import "time"
 type SourceType string
 
 const (
-	SourceFreeRadiusSQL SourceType = "freeradius_sql"
+	SourceFreeRadiusSQL   SourceType = "freeradius_sql"
+	SourceFreeRadiusFiles SourceType = "freeradius_files"
 )
 
 type Source struct {

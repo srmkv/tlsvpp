@@ -4,652 +4,1883 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ZTNA Экран-М</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root{
-      --bg:#f4f7fb; --panel:#fff; --line:#dce6f2; --text:#162338; --muted:#6d7b90;
-      --accent:#2b5cab; --ok:#1f7a3f; --bad:#c0392b; --warn:#b7791f;
-      --shadow:0 12px 28px rgba(15,23,42,.06); --radius:16px;
+    /* ── Design tokens ── */
+    :root {
+      --navy:      #0d1421;
+      --navy2:     #151f30;
+      --navy3:     #1e2d44;
+      --navy4:     #243550;
+      --border:    #2d3f58;
+      --border2:   #dce8f5;
+      --bg:        #f0f4f9;
+      --panel:     #ffffff;
+      --text:      #0f1f35;
+      --muted:     #607490;
+      --accent:    #2563eb;
+      --accent2:   #1d4ed8;
+      --ok:        #16a34a;
+      --ok-bg:     #dcfce7;
+      --bad:       #dc2626;
+      --bad-bg:    #fee2e2;
+      --warn:      #d97706;
+      --warn-bg:   #fef3c7;
+      --info:      #0284c7;
+      --info-bg:   #e0f2fe;
+      --radius:    10px;
+      --radius-lg: 14px;
+      --shadow:    0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05);
+      --sidebar-w: 220px;
+      --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+      --font:      'IBM Plex Sans', system-ui, sans-serif;
     }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
-    .wrap{max-width:1440px;margin:0 auto;padding:24px}
-    .top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
-    h1{margin:0 0 8px 0;font-size:28px}.muted{color:var(--muted)} .small{font-size:13px}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
-    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.stack{display:flex;flex-direction:column;gap:8px}.tiny{font-size:12px}.codeBox{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;background:#f9fbfe;border:1px solid var(--line);border-radius:12px;padding:10px}.badgeRow{display:flex;gap:6px;flex-wrap:wrap}.pillInfo{background:#eef4ff;color:#1d4ed8}.pillMute{background:#f3f4f6;color:#475569}
-    .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
-    .field{display:flex;flex-direction:column;gap:6px;min-width:220px;flex:1 1 220px}
-    label{font-size:13px;font-weight:700;color:var(--muted)}
-    input,select,textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:var(--text);font-family:inherit;line-height:1.25}
-    input:focus,select:focus{border-color:var(--accent)}
-    button{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:var(--text);min-height:42px;font-family:inherit;line-height:1.1}
-    button:hover{border-color:var(--accent)}
-    .btnPrimary{background:var(--accent);color:#fff;border-color:var(--accent)} .btnWarn{background:#fffaf0;color:var(--warn);border-color:#efd29e}
-    .pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
-    .pillOk{background:#e9f8ee;color:var(--ok)} .pillBad{background:#fdecea;color:var(--bad)} .pillWarn{background:#fff7ed;color:#b45309}
-    table{width:100%;border-collapse:collapse}
-    th,td{text-align:left;padding:10px;border-bottom:1px solid #edf2f8;vertical-align:top;font-size:14px}
-    th{font-size:12px;color:var(--muted);font-weight:800;background:#f9fbfe;position:sticky;top:0}
-    .tableWrap{overflow:auto;max-height:56vh;border:1px solid var(--line);border-radius:14px}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.actions{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap}
-    .iconBtn{width:34px;min-width:34px;flex:0 0 34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px}
-    .actionMenu{position:relative;display:inline-block}
-    .floatingMenu{position:fixed;display:none;min-width:240px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 36px rgba(15,23,42,.14);padding:8px;z-index:2000}
-    .floatingMenu.open{display:block}
-    .menuItem{display:flex;width:100%;align-items:center;gap:10px;padding:10px 12px;border:none;background:#fff;border-radius:10px;text-align:left;font-weight:600;min-height:unset;font-family:inherit}
-    .menuItem:hover{background:#f4f7fb}
-    .menuDivider{height:1px;background:#edf2f8;margin:6px 0}
-    .modalBg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
-    .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:18px;width:min(920px,100%);max-height:88vh;overflow:auto}.modal .row{align-items:flex-start}.modal .field{min-width:0}
-    .titleBar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.splitInfo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .kv{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:start}.kv .k{font-size:13px;font-weight:700;color:var(--muted)} .kv .v{font-size:14px;word-break:break-word}.sessionHistory{display:flex;flex-direction:column;gap:10px}.histItem{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f9fbfe}.histTop{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.histMeta{font-size:12px;color:var(--muted)}.roadmapList{display:flex;flex-direction:column;gap:12px}.roadmapCard{border:1px solid var(--line);border-radius:14px;background:#f9fbfe;overflow:hidden}.roadmapCard summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.roadmapCard summary::-webkit-details-marker{display:none}.roadmapHead{display:flex;flex-direction:column;gap:4px}.roadmapMeta{font-size:12px;color:var(--muted)}.roadmapBody{padding:0 14px 14px 14px}.timeline{position:relative;display:flex;flex-direction:column;gap:12px;margin:4px 0 0 0;padding-left:18px}.timeline:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:#dbe7f3}.step{position:relative;padding-left:18px}.step:before{content:'';position:absolute;left:-17px;top:4px;width:10px;height:10px;border-radius:999px;background:#94a3b8;border:2px solid #fff;box-shadow:0 0 0 2px #dbe7f3}.stepOpen:before{background:#2563eb}.stepHandshake:before{background:#16a34a}.stepActivity:before{background:#d97706}.stepClose:before{background:#dc2626}.stepTitle{font-size:14px;font-weight:700}.stepMeta{font-size:12px;color:var(--muted);margin-top:2px}.roadmapEmpty{padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fff}.certActions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.certTextArea{width:100%;min-height:180px;border:1px solid var(--line);border-radius:12px;background:#f9fbfe;padding:12px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);white-space:pre;overflow:auto}.certTextArea[readonly]{background:#f9fbfe}
-  
-    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-    .tabBtn{border-radius:999px;padding:10px 16px;background:#eef4ff;border-color:#d7e5ff}
-    .tabBtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-    .tabPanel{display:none}.tabPanel.active{display:block}
-    .statusIcons{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap;min-width:max-content}
-    .stateDot{width:26px;height:26px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;border:1px solid var(--line);background:#fff}
-    .stateOn{background:#e9f8ee;color:var(--ok);border-color:#b9e6c6}
-    .stateOff{background:#f3f4f6;color:#64748b;border-color:#dce6f2}
-    .stateWarn{background:#fff7ed;color:#b45309;border-color:#f5d8a8}
-    .stateBad{background:#fdecea;color:var(--bad);border-color:#f1b8b1}
-    .stateInfo{background:#eef4ff;color:#1d4ed8;border-color:#cfe0ff}
-    .headActions{display:flex;gap:10px;flex-wrap:wrap}
-    .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
-    .emptyNote{padding:14px;border:1px dashed var(--line);border-radius:14px;background:#f9fbfe;color:var(--muted)}
-
-
-    .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-    .sectionHead h3{margin:0;font-size:18px}
-    .top .card{min-width:420px}
-    .kv{grid-template-columns:160px 1fr}
-    .modal .row,.card .row{align-items:flex-end}
-    .profileFormGrid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:12px}
-    .profileFormGrid .field.full{grid-column:1 / -1}
-    .statusLine{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .statusText{font-size:12px;color:var(--muted)}
-    
-    .topMeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
-    .healthPill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:13px;font-weight:700}
-    .healthPill.ok{background:#e9f8ee;color:var(--ok);border-color:#b9e6c6}
-    .healthPill.warn{background:#fff7ed;color:#b45309;border-color:#f5d8a8}
-    .infoDot{width:20px;height:20px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;font-size:12px;font-weight:800;cursor:help;opacity:.85}
-    .tableWrap table{min-width:1200px}
-    .statusCol,.statusCell{width:72px;max-width:72px;min-width:72px;white-space:nowrap}
-
-    @media (max-width:1100px){.grid3,.grid4,.grid2{grid-template-columns:1fr}.profileFormGrid{grid-template-columns:1fr}.top{flex-direction:column}.top .card{min-width:unset;width:100%}}
-
-  
-    .summaryShell{display:flex;flex-direction:column;gap:16px}
-    .summaryHero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#fbfdff 0%,#f5f9ff 100%)}
-    .summaryHeroTitle{display:flex;flex-direction:column;gap:6px}
-    .summaryUser{font-size:22px;font-weight:800;line-height:1.1}
-    .summaryMeta{display:flex;gap:8px;flex-wrap:wrap}
-    .summaryGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-    .summarySection{border:1px solid var(--line);border-radius:16px;background:#fff;overflow:hidden}
-    .summarySectionHead{padding:12px 14px;border-bottom:1px solid #edf2f8;background:#f9fbfe;font-size:13px;font-weight:800;color:#334155}
-    .summarySectionBody{padding:14px}
-    .summaryList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
-    .summaryField{display:flex;flex-direction:column;gap:4px;min-width:0}
-    .summaryLabel{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
-    .summaryValue{font-size:14px;line-height:1.35;word-break:break-word}
-    .summaryValue.mono{font-size:13px}
-    .summaryWide{grid-column:1 / -1}
-    .summaryInterfaces{margin:0;white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f9fbfe;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:240px;overflow:auto}
-    @media (max-width:900px){
-      .summaryGrid{grid-template-columns:1fr}
-      .summaryList{grid-template-columns:1fr}
-      .summaryHero{flex-direction:column}
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+      font-size: 14px;
     }
 
-  
-    .appDeniedRow td{background:#fdecea !important;color:#7f1d1d}
-    .appDeniedRow td .mono{color:#7f1d1d}
+    /* ── Sidebar ── */
+    .sidebar {
+      width: var(--sidebar-w);
+      background: var(--navy);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      z-index: 100;
+    }
+    .sidebar-logo {
+      padding: 20px 18px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .logo-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: .04em;
+    }
+    .sidebar-logo .logo-sub {
+      font-size: 11px;
+      color: #5a7299;
+      margin-top: 2px;
+    }
+    .sidebar-health {
+      margin: 10px 12px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--navy3);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: #7a99be;
+      cursor: default;
+    }
+    .sidebar-health .hdot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #4b5563;
+      flex-shrink: 0;
+    }
+    .sidebar-health.ok .hdot  { background: var(--ok); box-shadow: 0 0 6px rgba(22,163,74,.5); }
+    .sidebar-health.bad .hdot { background: var(--bad); }
+    .sidebar-health.ok   { color: #86efac; }
+    .sidebar-health.bad  { color: #fca5a5; }
 
-    .presetGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    .presetItem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fff;cursor:pointer}
-    .presetItem input{margin-top:3px}
-    .presetItem.active{background:#fdecea;border-color:#f3b1ab}
-    .presetTitle{font-weight:800;font-size:13px}
-    .presetMeta{font-size:12px;color:var(--muted);margin-top:2px}
-    @media (max-width:900px){.presetGrid{grid-template-columns:1fr}}
+    nav { flex: 1; padding: 8px 8px; overflow-y: auto; }
+    .nav-section-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #3a5270;
+      padding: 12px 10px 4px;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: #7a99be;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background .12s, color .12s;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+    .nav-item:hover { background: var(--navy3); color: #c4d9ef; }
+    .nav-item.active { background: var(--accent); color: #fff; }
+    .nav-item .nav-icon { font-size: 15px; width: 20px; text-align: center; flex-shrink: 0; }
+    .nav-badge {
+      margin-left: auto;
+      background: var(--navy4);
+      color: #7a99be;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 99px;
+    }
+    .nav-item.active .nav-badge { background: rgba(255,255,255,.2); color: #fff; }
 
-</style>
+    .sidebar-footer {
+      padding: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .api-input-wrap {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .api-input-wrap input {
+      flex: 1;
+      background: var(--navy3);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: #c4d9ef;
+      outline: none;
+    }
+    .api-input-wrap input:focus { border-color: var(--accent); }
+    .api-input-wrap button {
+      background: var(--accent);
+      border: none;
+      border-radius: 7px;
+      padding: 6px 8px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* ── Main content ── */
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      min-width: 0;          /* CRITICAL: prevents flex children from blowing out width */
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      overflow-x: hidden;    /* clip any accidental overflow */
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border2);
+      padding: 0 20px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      min-width: 0;
+    }
+    .topbar-title { font-size: 16px; font-weight: 700; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar-meta { font-size: 12px; color: var(--muted); font-family: var(--font-mono); display: none; }
+    #apiBaseText { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+    /* ── Content area ── */
+    .content { flex: 1; padding: 18px 20px; min-width: 0; overflow-x: hidden; }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      margin-bottom: 16px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .card-title { font-size: 15px; font-weight: 700; }
+    .card-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Stat grid ── */
+    .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .stat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; }
+    .stat-value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .stat-sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stat-card.ok   .stat-value { color: var(--ok); }
+    .stat-card.bad  .stat-value { color: var(--bad); }
+    .stat-card.warn .stat-value { color: var(--warn); }
+    .stat-card.info .stat-value { color: var(--info); }
+
+    /* ── Tables ── */
+    .table-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .search-input {
+      padding: 7px 12px 7px 32px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: var(--font);
+      outline: none;
+      background: #f8fafc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;
+      width: 200px;
+      min-width: 0;
+      transition: border-color .15s;
+    }
+    .search-input:focus { border-color: var(--accent); background-color: #fff; }
+    .table-wrap {
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-lg);
+      overflow-x: auto;     /* horizontal scroll inside the wrap, not outside */
+      overflow-y: auto;
+      max-height: 58vh;
+      width: 100%;          /* never exceed card width */
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 560px; }
+    th {
+      text-align: left;
+      padding: 9px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--muted);
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border2);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+      font-size: 13px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8fafc; }
+    tr.row-hidden { display: none; }
+    .mono { font-family: var(--font-mono); font-size: 12px; }
+
+    /* ── Status badges ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .badge.ok   { background: var(--ok-bg);   color: var(--ok);   }
+    .badge.bad  { background: var(--bad-bg);  color: var(--bad);  }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .badge.info { background: var(--info-bg); color: var(--info); }
+    .badge.mute { background: #f1f5f9; color: var(--muted); }
+    .badge.ok   .badge-dot { background: var(--ok); }
+    .badge.bad  .badge-dot { background: var(--bad); }
+    .badge.warn .badge-dot { background: var(--warn); }
+    .badge.info .badge-dot { background: var(--info); }
+    .badge.mute .badge-dot { background: #cbd5e1; }
+
+    /* Compact status row */
+    .status-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+
+    /* ── Forms ── */
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 12px; }
+    .form-grid.cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .form-grid.cols3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .form-grid.full > .full { grid-column: 1 / -1; }
+    .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    label { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .02em; }
+    input, select, textarea {
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      padding: 8px 11px;
+      font-size: 13px;
+      font-family: var(--font);
+      color: var(--text);
+      background: #fff;
+      outline: none;
+      transition: border-color .15s;
+      min-width: 0;
+      width: 100%;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+    .field .hint { font-size: 11px; color: var(--muted); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--font);
+      cursor: pointer;
+      border: 1px solid var(--border2);
+      background: #fff;
+      color: var(--text);
+      transition: all .12s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:hover:not(:disabled) { border-color: #94a3b8; background: #f8fafc; }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn.primary:hover:not(:disabled) { background: var(--accent2); }
+    .btn.danger  { background: #fff; color: var(--bad); border-color: #fca5a5; }
+    .btn.danger:hover:not(:disabled) { background: var(--bad-bg); }
+    .btn.warn    { background: var(--warn-bg); color: var(--warn); border-color: #fcd34d; }
+    .btn.sm      { padding: 5px 9px; font-size: 12px; }
+    .btn.icon    { padding: 5px 7px; }
+    .btn-group   { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; min-width: 0; }
+    .btn .spinner { display: none; }
+    .btn.loading .spinner { display: inline-block; width: 11px; height: 11px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; }
+    .btn.loading .btn-label { opacity: .6; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast notifications ── */
+    #toastContainer {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 8px;
+      max-width: 360px;
+    }
+    .toast {
+      display: flex; align-items: flex-start; gap: 10px;
+      background: var(--navy);
+      color: #e2eaf4;
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      box-shadow: 0 4px 24px rgba(0,0,0,.25);
+      font-size: 13px;
+      animation: toastIn .2s ease;
+      border-left: 3px solid #3a5270;
+    }
+    .toast.ok   { border-color: var(--ok);   }
+    .toast.bad  { border-color: var(--bad);  }
+    .toast.warn { border-color: var(--warn); }
+    .toast.info { border-color: var(--info); }
+    .toast-icon { font-size: 16px; flex-shrink: 0; line-height: 1.3; }
+    .toast-body { flex: 1; line-height: 1.45; }
+    .toast-close { cursor: pointer; color: #5a7299; font-size: 16px; line-height: 1; flex-shrink: 0; }
+    @keyframes toastIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    /* ── Confirm dialog ── */
+    #confirmBg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 8000;
+      backdrop-filter: blur(2px);
+    }
+    #confirmBg.open { display: flex; }
+    #confirmBox {
+      background: #fff;
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      width: 360px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.2);
+    }
+    #confirmBox h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+    #confirmBox p  { font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+    #confirmBox .btn-group { justify-content: flex-end; }
+
+    /* ── Modals ── */
+    .modalBg {
+      position: fixed; inset: 0;
+      background: rgba(13,20,33,.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 500;
+      backdrop-filter: blur(2px);
+    }
+    .modal {
+      background: #fff;
+      border-radius: var(--radius-lg);
+      box-shadow: 0 24px 64px rgba(0,0,0,.2);
+      padding: 24px;
+      width: min(960px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      gap: 12px;
+    }
+    .modal-header h2 { font-size: 17px; font-weight: 700; }
+    .modal .form-grid { margin-bottom: 16px; }
+
+    /* ── Drawer (detail panel) ── */
+    .drawer-bg {
+      position: fixed; inset: 0;
+      background: rgba(13,20,33,.4);
+      display: none;
+      z-index: 400;
+    }
+    .drawer-bg.open { display: block; }
+    .drawer {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: min(520px, 100%);
+      background: #fff;
+      box-shadow: -8px 0 32px rgba(0,0,0,.12);
+      transform: translateX(100%);
+      transition: transform .25s ease;
+      overflow: auto;
+      z-index: 401;
+    }
+    .drawer.open { transform: none; }
+    .drawer-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 1;
+    }
+    .drawer-header h2 { font-size: 16px; font-weight: 700; }
+    .drawer-body { padding: 20px 24px; }
+    .kv-list { display: flex; flex-direction: column; gap: 10px; }
+    .kv-row { display: grid; grid-template-columns: 140px 1fr; gap: 8px; align-items: start; }
+    .kv-row .k { font-size: 12px; font-weight: 700; color: var(--muted); padding-top: 2px; }
+    .kv-row .v { font-size: 13px; word-break: break-all; }
+
+    /* Section headers */
+    .section-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--muted);
+      margin: 20px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border2);
+    }
+    .section-label:first-child { margin-top: 0; }
+
+    /* ── Misc ── */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--muted);
+    }
+    .empty-state .empty-icon { font-size: 32px; margin-bottom: 8px; }
+    .empty-state p { font-size: 13px; }
+    .actions { display: flex; gap: 6px; align-items: center; }
+    .floating-menu {
+      position: fixed;
+      display: none;
+      min-width: 200px;
+      background: #fff;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 8px 32px rgba(0,0,0,.12);
+      padding: 6px;
+      z-index: 2000;
+    }
+    .floating-menu.open { display: block; }
+    .menu-item {
+      display: flex; width: 100%; align-items: center; gap: 9px;
+      padding: 8px 10px;
+      border: none; background: #fff; border-radius: 7px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      text-align: left; font-family: var(--font); color: var(--text);
+    }
+    .menu-item:hover { background: #f1f5f9; }
+    .menu-item.danger { color: var(--bad); }
+    .menu-divider { height: 1px; background: var(--border2); margin: 4px 0; }
+    .text-muted { color: var(--muted); }
+    .text-small { font-size: 12px; }
+    .mt8 { margin-top: 8px; }
+    .gap12 { gap: 12px; }
+    textarea { resize: vertical; min-height: 80px; }
+    .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .preset-item {
+      display: flex; gap: 9px; align-items: flex-start;
+      padding: 9px 11px; border: 1px solid var(--border2);
+      border-radius: 8px; background: #fff; cursor: pointer;
+    }
+    .preset-item.active { background: #fef2f2; border-color: #fca5a5; }
+    .preset-title { font-weight: 700; font-size: 12px; }
+    .preset-meta  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+    @media (max-width: 1100px) {
+      .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      :root { --sidebar-w: 56px; }
+      .sidebar .logo-text, .sidebar .logo-sub,
+      .sidebar .nav-item span:not(.nav-icon),
+      .sidebar .nav-badge, .sidebar .nav-section-label,
+      .sidebar-footer, .sidebar-health span { display: none; }
+      .sidebar { width: 56px; }
+      .main { margin-left: 56px; }
+      .stat-grid { grid-template-columns: 1fr 1fr; }
+      .form-grid, .form-grid.cols2, .form-grid.cols3 { grid-template-columns: 1fr; }
+      .topbar { padding: 0 12px; }
+      .content { padding: 12px; }
+    }
+    @media (max-width: 600px) {
+      .stat-grid { grid-template-columns: 1fr; }
+      .modal { padding: 16px; }
+    }
+  </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="top">
-    <div>
-      <div class="muted small">ZTNA / администрирование доступа</div>
-      <h1>ZTNA Экран-М</h1>
+
+<!-- ── Sidebar ── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-text">ZTNA Экран-М</div>
+    <div class="logo-sub">Панель администратора</div>
+  </div>
+  <div id="healthPill" class="sidebar-health" title="Состояние агента">
+    <div class="hdot"></div>
+    <span id="healthPillText">Проверка…</span>
+  </div>
+  <nav>
+    <div class="nav-section-label">Мониторинг</div>
+    <button class="nav-item active" data-page="dashboard">
+      <span class="nav-icon">⬡</span><span>Дашборд</span>
+    </button>
+    <button class="nav-item" data-page="users">
+      <span class="nav-icon">👥</span><span>Пользователи</span>
+      <span class="nav-badge" id="badgeUsers">0</span>
+    </button>
+    <button class="nav-item" data-page="sessions">
+      <span class="nav-icon">🔗</span><span>Сессии</span>
+      <span class="nav-badge" id="badgeSessions">0</span>
+    </button>
+
+    <div class="nav-section-label">Конфигурация</div>
+    <button class="nav-item" data-page="profiles">
+      <span class="nav-icon">📋</span><span>VPN профили</span>
+    </button>
+    <button class="nav-item" data-page="policies">
+      <span class="nav-icon">🛡</span><span>Политики</span>
+    </button>
+    <button class="nav-item" data-page="radius">
+      <span class="nav-icon">📡</span><span>RADIUS</span>
+    </button>
+
+    <div class="nav-section-label">Система</div>
+    <button class="nav-item" data-page="settings">
+      <span class="nav-icon">⚙</span><span>Настройки TLS</span>
+    </button>
+    <button class="nav-item" data-page="smtp">
+      <span class="nav-icon">✉</span><span>Email / 2FA</span>
+    </button>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="api-input-wrap">
+      <input id="apiBase" value="http://127.0.0.1:9080" title="API base URL" />
+      <button id="btnApplyApi">OK</button>
+    </div>
+    <div style="font-size:10px;color:#3a5270;margin-top:5px;font-family:var(--font-mono)" id="apiBaseText">http://127.0.0.1:9080</div>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main class="main">
+  <header class="topbar">
+    <div class="topbar-title" id="pageTitle">Дашборд</div>
+    <div class="topbar-meta" id="healthMeta"></div>
+  </header>
+
+  <div class="content">
+
+    <!-- ══ DASHBOARD ══════════════════════════════════════════════════════ -->
+    <div class="page active" id="page-dashboard">
+      <div class="stat-grid">
+        <div class="stat-card info">
+          <div class="stat-label">Пользователей</div>
+          <div class="stat-value" id="kpiUsers">—</div>
+          <div class="stat-sub" id="kpiUsersMeta">включено / всего</div>
+        </div>
+        <div class="stat-card ok">
+          <div class="stat-label">Активных сессий</div>
+          <div class="stat-value" id="kpiSessions">—</div>
+          <div class="stat-sub" id="kpiSessionsMeta">agent connected</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">VPN профилей</div>
+          <div class="stat-value" id="kpiProfiles">—</div>
+          <div class="stat-sub" id="kpiProfilesMeta">full / split</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">VPN туннелей</div>
+          <div class="stat-value" id="kpiTunnels">—</div>
+          <div class="stat-sub" id="kpiTunnelsMeta">runtime</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Быстрые действия</div></div>
           </div>
-    <div class="card small">
-      <div><b>API base:</b> <span class="mono" id="apiBaseText">http://127.0.0.1:9080</span></div>
-      <div class="topMeta">
-        <span id="healthPill" class="healthPill warn">Agent health: — <span id="healthInfo" class="infoDot" title="Проверьте /healthz">i</span></span>
-        <span><b>Клиент подключается:</b> <span class="mono">к mTLS API на :9443</span></span>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row">
-      <div class="field">
-        <label for="apiBase">API base URL</label>
-        <input id="apiBase" value="http://127.0.0.1:9080" />
-      </div>
-      <div><button type="button" id="btnApplyApi">Применить</button></div>
-    </div>
-  </div>
-
-  <div id="healthMeta" style="display:none"></div>
-
-  <div class="tabs">
-    <button type="button" class="tabBtn active" data-tab="settings">Настройки TLS</button>
-    <button type="button" class="tabBtn" data-tab="profiles">VPN профили</button>
-    <button type="button" class="tabBtn" data-tab="policies">Политики приложений</button>
-    <button type="button" class="tabBtn" data-tab="users">Пользователи и сессии</button>
-  </div>
-
-  <div class="tabPanel active" data-panel="settings">
-  <div class="card">
-    <div class="row">
-      <div class="field">
-        <label for="clientPublicURL">Клиентский API URL (mTLS)</label>
-        <input id="clientPublicURL" placeholder="например: https://192.168.0.241:9443" />
-      </div>
-      <div class="field">
-        <label for="serverName">Предпочтительный Server Name</label>
-        <input id="serverName" placeholder="если пусто, возьмётся host из URL" />
-      </div>
-      <div class="field">
-        <label for="extraSANs">Доп. SAN адреса/имена</label>
-        <input id="extraSANs" placeholder="через запятую, например: 192.168.0.241,host.local" />
-      </div>
-      <div class="field">
-        <label for="pluginListenAddr">Listen addr плагина</label>
-        <input id="pluginListenAddr" placeholder="например: 0.0.0.0" />
-      </div>
-      <div class="field">
-        <label for="pluginListenPort">Listen port плагина</label>
-        <input id="pluginListenPort" placeholder="например: 9443" />
-      </div>
-      <div><button type="button" id="btnSaveSettings">Сохранить TLS-настройки</button></div>
-    </div>
-    <div class="muted small">Сертификат сервера будет выпускаться для localhost, всех локальных IP сервера, адреса из URL и дополнительных SAN из поля выше.</div>
-  </div>
-
-
-
-  <div class="card" style="margin-top:14px">
-    <div style="font-weight:800;margin-bottom:12px">SMTP / Email 2FA</div>
-    <div class="row">
-      <div class="field" style="max-width:180px"><label for="smtpEnabled">Email 2FA</label><select id="smtpEnabled"><option value="true">Включено</option><option value="false">Выключено</option></select></div>
-      <div class="field"><label for="smtpHost">SMTP host</label><input id="smtpHost" placeholder="smtp.example.com" /></div>
-      <div class="field" style="max-width:140px"><label for="smtpPort">SMTP port</label><input id="smtpPort" placeholder="587" /></div>
-      <div class="field" style="max-width:180px"><label for="smtpSecurity">Шифрование</label><select id="smtpSecurity"><option value="starttls">STARTTLS</option><option value="tls">SSL/TLS</option><option value="none">Без TLS</option></select></div>
-    </div>
-    <div class="row">
-      <div class="field"><label for="smtpUsername">SMTP username</label><input id="smtpUsername" /></div>
-      <div class="field"><label for="smtpPassword">SMTP password</label><input id="smtpPassword" type="password" /></div>
-      <div class="field"><label for="smtpFromEmail">From email</label><input id="smtpFromEmail" placeholder="vpn@example.com" /></div>
-      <div class="field"><label for="smtpFromName">From name</label><input id="smtpFromName" placeholder="ZTNA Экран-М" /></div>
-    </div>
-    <div class="row">
-      <div class="field"><label for="smtpReplyTo">Reply-To</label><input id="smtpReplyTo" placeholder="support@example.com" /></div>
-      <div class="field"><label for="smtpSubjectTemplate">Тема письма</label><input id="smtpSubjectTemplate" placeholder="Код подтверждения входа в VPN" /></div>
-      <div class="field"><label for="smtpTestTo">Тестовый email</label><input id="smtpTestTo" placeholder="user@example.com" /></div>
-    </div>
-    <div class="row">
-      <div class="field full"><label for="smtpBodyTemplate">Шаблон письма</label><textarea id="smtpBodyTemplate" rows="5" placeholder="Ваш код: {{CODE}}"></textarea></div>
-    </div>
-    <div class="row">
-      <div class="field" style="max-width:160px"><label for="smtpCodeTTL">TTL кода, сек</label><input id="smtpCodeTTL" placeholder="300" /></div>
-      <div class="field" style="max-width:160px"><label for="smtpCodeLength">Длина кода</label><input id="smtpCodeLength" placeholder="6" /></div>
-      <div class="field" style="max-width:160px"><label for="smtpMaxAttempts">Попыток</label><input id="smtpMaxAttempts" placeholder="5" /></div>
-      <div class="actions"><button type="button" id="btnSaveSMTP">Сохранить SMTP</button><button type="button" id="btnTestSMTP">Отправить тестовое письмо</button></div>
-    </div>
-  </div>
-
-  <div class="grid3">
-    <div class="card">
-      <div style="font-weight:800;margin-bottom:12px">Выдать bundle</div>
-      <div class="row">
-        <div class="field"><label for="bundleUser">Учетная запись</label><input id="bundleUser" placeholder="например: demo-user" /></div>
-        <div><button class="btnPrimary" type="button" id="btnBundle">Скачать bundle</button></div>
-      </div>
-    </div>
-    <div class="card">
-      <div style="font-weight:800;margin-bottom:12px">Перевыпустить bundle</div>
-      <div class="row">
-        <div class="field"><label for="reissueUser">Учетная запись</label><input id="reissueUser" placeholder="например: demo-user" /></div>
-        <div><button class="btnWarn" type="button" id="btnReissueBundle">Перевыпустить и скачать</button></div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="grid4">
-    <div class="card">
-      <div class="muted tiny">Client public URL</div>
-      <div id="kpiClientUrl" class="mono small" style="margin-top:6px">—</div>
-      <div class="muted small" id="kpiServerName" style="margin-top:6px">—</div>
-    </div>
-    <div class="card">
-      <div class="muted tiny">Профили</div>
-      <div id="kpiProfiles" style="font-weight:800;margin-top:6px">0</div>
-      <div class="muted small" id="kpiProfilesMeta" style="margin-top:6px">—</div>
-    </div>
-    <div class="card">
-      <div class="muted tiny">Пользователи</div>
-      <div id="kpiUsers" style="font-weight:800;margin-top:6px">0</div>
-      <div class="muted small" id="kpiUsersMeta" style="margin-top:6px">—</div>
-    </div>
-  </div>
-
-  </div>
-
-  <div class="tabPanel" data-panel="policies">
-    <div class="grid2">
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <div>
-            <div style="font-weight:800">Политики запрещённых приложений</div>
-            <div class="muted small">Для каждой политики можно отдельно включать клиентскую блокировку и серверную детекцию.</div>
-          </div>
-          <div class="actions">
-            <button type="button" id="btnRefreshPolicies">Обновить политики</button>
-            <button type="button" id="btnOpenPolicyModal" class="btnPrimary">Создать политику</button>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div class="form-grid cols2">
+              <div class="field">
+                <label>Выдать bundle</label>
+                <div class="btn-group">
+                  <input id="bundleUser" placeholder="username" style="flex:1" />
+                  <button class="btn primary sm" id="btnBundle">Скачать</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Перевыпустить bundle</label>
+                <div class="btn-group">
+                  <input id="reissueUser" placeholder="username" style="flex:1" />
+                  <button class="btn warn sm" id="btnReissueBundle">Перевыпустить</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="tableWrap" style="max-height:34vh">
+
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Состояние системы</div></div>
+            <button class="btn sm" id="btnRefreshDash">⟳ Обновить</button>
+          </div>
+          <div class="kv-list" id="dashSystemInfo">
+            <div class="kv-row"><div class="k">VPP API</div><div class="v text-muted">—</div></div>
+            <div class="kv-row"><div class="k">Client URL</div><div class="v mono" id="kpiClientUrl">—</div></div>
+            <div class="kv-row"><div class="k">Plugin порт</div><div class="v mono" id="kpiPlugin">—</div></div>
+            <div class="kv-row"><div class="k">Шардов</div><div class="v" id="kpiShards">—</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ USERS ═══════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-users">
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-header">
+          <div><div class="card-title">Добавить / обновить пользователя</div></div>
+          <button class="btn sm" id="btnUpsert"><span class="btn-label">Сохранить</span><span class="spinner"></span></button>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Учётная запись</label>
+            <input id="username" placeholder="alice" />
+          </div>
+          <div class="field">
+            <label>Cert serial</label>
+            <input id="certSerial" class="mono" placeholder="(вручную или из bundle)" />
+          </div>
+          <div class="field" style="max-width:160px">
+            <label>Доступ</label>
+            <select id="enabled"><option value="true">Включён</option><option value="false">Выключен</option></select>
+          </div>
+          <div class="field">
+            <label>VPN профиль</label>
+            <select id="userProfile"><option value="">Без профиля</option></select>
+          </div>
+          <div class="field">
+            <label>Email (для 2FA)</label>
+            <input id="userEmail" placeholder="user@example.com" />
+          </div>
+          <div class="field" style="max-width:160px">
+            <label>Email 2FA</label>
+            <select id="userRequire2FA"><option value="false">Выключено</option><option value="true">Включено</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-toolbar">
+          <input class="search-input" id="usersSearch" placeholder="Поиск по имени, профилю, IP…" />
+          <div style="flex:1"></div>
+          <button class="btn sm" id="btnRefresh">⟳ Обновить</button>
+        </div>
+        <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Политика</th><th>Режим</th><th>Где проверять</th><th>Scope</th><th>Шаблоны</th><th>Сообщение</th><th>Статус</th><th>Действия</th></tr>
+              <tr>
+                <th class="statusCol">Статус</th>
+                <th>Учётная запись</th>
+                <th>Профиль</th>
+                <th>Email</th>
+                <th>2FA</th>
+                <th>IP</th>
+                <th>ОС</th>
+                <th>Приложений</th>
+                <th>Активность</th>
+                <th style="width:60px"></th>
+              </tr>
             </thead>
-            <tbody id="policyRows"><tr><td colspan="8" class="muted">Нет данных</td></tr></tbody>
+            <tbody id="rows"><tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Нет пользователей</p></div></td></tr></tbody>
           </table>
         </div>
       </div>
+    </div>
+
+    <!-- ══ SESSIONS ════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-sessions">
       <div class="card">
-        <div class="sectionHead">
+        <div class="table-toolbar">
+          <input class="search-input" id="sessionsSearch" placeholder="Поиск по имени, IP, ОС…" />
+          <div style="flex:1"></div>
+          <button class="btn sm" id="btnRefreshSessions">⟳ Обновить</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="statusCol">Статус</th>
+                <th>Пользователь / профиль</th>
+                <th>IP / MAC</th>
+                <th>ОС / версия</th>
+                <th>Подключён</th>
+                <th>Активность</th>
+                <th style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="sessionRows"><tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🔗</div><p>Нет активных сессий</p></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ PROFILES ════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-profiles">
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">VPN профили</div><div class="card-sub">Синхронизируются в VPP plugin через GovPP</div></div>
+          <div class="btn-group">
+            <button class="btn sm" id="btnSyncVPN"><span class="btn-label">⟳ Sync в plugin</span><span class="spinner"></span></button>
+            <button class="btn sm" id="btnRefreshProfiles">Обновить</button>
+            <button class="btn primary sm" id="btnOpenProfileModal">+ Создать профиль</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Профиль</th><th>Pool / Подсеть</th><th>Маршрутизация</th><th>DNS · MTU · MSS</th><th>Обновлён</th><th style="width:80px"></th></tr>
+            </thead>
+            <tbody id="profileRows"><tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📋</div><p>Нет профилей</p></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ POLICIES ════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-policies">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Политики приложений</div></div>
+            <div class="btn-group">
+              <button class="btn sm" id="btnRefreshPolicies">Обновить</button>
+              <button class="btn primary sm" id="btnOpenPolicyModal">+ Создать</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Политика</th><th>Режим</th><th>Scope</th><th>Шаблоны</th><th>Статус</th><th></th></tr>
+              </thead>
+              <tbody id="policyRows"><tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🛡</div><p>Нет политик</p></div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:12px">Логика проверки</div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="background:#f8fafc;border:1px solid var(--border2);border-radius:10px;padding:12px">
+              <div style="font-weight:700;font-size:12px;margin-bottom:4px">🖥 Клиентская проверка</div>
+              <div class="text-small text-muted">Блокирует подключение до VPN bind. Мгновенная реакция.</div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid var(--border2);border-radius:10px;padding:12px">
+              <div style="font-weight:700;font-size:12px;margin-bottom:4px">🔍 Серверная детекция</div>
+              <div class="text-small text-muted">Не блокирует, но фиксирует нарушение и показывает в UI.</div>
+            </div>
+            <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px">
+              <div style="font-weight:700;font-size:12px;margin-bottom:4px">💡 Шаблоны</div>
+              <div class="text-small text-muted">Подстроки или <span class="mono">regex:</span> префикс. Символ <span class="mono">*</span> как wildcard. Одно правило на строку.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ RADIUS ══════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-radius">
+      <div class="card">
+        <div class="card-header">
           <div>
-            <div style="font-weight:800">Логика политики</div>
-            <div class="muted small">Клиентская проверка блокирует подключение до bind. Серверная проверка не блокирует, а только детектирует и показывает нарушение в web.</div>
+            <div class="card-title">radius-agent</div>
+            <div class="card-sub">Синхронизация пользователей из FreeRADIUS и push в tlsagent</div>
+          </div>
+          <div class="btn-group">
+            <div id="radiusAgentHealth" class="badge mute">● Нет соединения</div>
+            <button class="btn primary sm" id="btnRadiusAgentConnect"><span class="btn-label">Подключить</span><span class="spinner"></span></button>
           </div>
         </div>
-        <div class="emptyNote">Рекомендуемый режим: <b>deny_on_match</b>. Шаблоны можно задавать как подстроки или regex через разделитель новой строки. Пример: <span class="mono">vpn</span>, <span class="mono">mattermost</span>, <span class="mono">wireguard|openvpn</span>.</div>
-        <div class="grid2" style="margin-top:12px">
-          <div class="card" style="box-shadow:none;background:#f9fbfe">
-            <div class="muted tiny">Назначение</div>
-            <div style="font-weight:800;margin-top:6px">Профиль / пользователь / все пользователи</div>
+        <div class="form-grid cols2">
+          <div class="field">
+            <label>URL radius-agent</label>
+            <input id="radiusAgentBase" placeholder="http://127.0.0.1:9190" />
           </div>
-          <div class="card" style="box-shadow:none;background:#f9fbfe">
-            <div class="muted tiny">Поведение</div>
-            <div style="font-weight:800;margin-top:6px">Client-check блокирует connect, server-check только детектирует</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Источники FreeRADIUS</div></div>
+            <div class="btn-group">
+              <button class="btn sm" id="btnRefreshSources">Обновить</button>
+              <button class="btn primary sm" id="btnOpenSourceModal">+ Добавить</button>
+            </div>
           </div>
+          <div class="table-wrap" style="max-height:32vh">
+            <table>
+              <thead><tr><th>Источник</th><th>Тип</th><th>Интервал</th><th>Статус</th><th></th></tr></thead>
+              <tbody id="radiusSourceRows"><tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📡</div><p>Нет источников</p></div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Группы → VPN профили</div></div>
+            <div class="btn-group">
+              <button class="btn sm" id="btnRefreshGroupMappings">Обновить</button>
+              <button class="btn primary sm" id="btnAddGroupMapping">+ Добавить</button>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:20vh">
+            <table>
+              <thead><tr><th>Группа RADIUS</th><th>VPN профиль</th><th>Статус</th><th></th></tr></thead>
+              <tbody id="radiusGroupMappingRows"><tr><td colspan="4"><div class="empty-state"><p>Нет маппингов</p></div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="form-grid" style="margin-top:12px">
+            <div class="field"><label>Группа RADIUS</label><input id="newMappingGroup" placeholder="vpn-users" /></div>
+            <div class="field"><label>VPN профиль</label><select id="newMappingProfile"><option value="default">default</option></select></div>
+            <div class="field" style="max-width:140px"><label>Статус</label><select id="newMappingEnabled"><option value="true">Включён</option><option value="false">Выключен</option></select></div>
+            <div style="display:flex;align-items:flex-end"><button class="btn sm" id="btnSaveGroupMapping">Сохранить</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Синхронизация</div></div>
+          <div class="btn-group">
+            <button class="btn sm" id="btnSyncAllSources"><span class="btn-label">Sync всех источников</span><span class="spinner"></span></button>
+            <button class="btn primary sm" id="btnPushToAgent"><span class="btn-label">⬆ Push в tlsagent</span><span class="spinner"></span></button>
+          </div>
+        </div>
+        <div id="radiusSyncStatus" class="text-muted text-small">Нажмите «Sync» для загрузки пользователей из FreeRADIUS, затем «Push» для отправки в tlsagent.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px">Проверка разрешения пользователя</div>
+        <div class="btn-group">
+          <select id="radiusResolveSource" style="min-width:180px"><option value="">— источник —</option></select>
+          <input id="radiusResolveUser" placeholder="username" style="width:180px" />
+          <button class="btn sm" id="btnRadiusResolve">Проверить</button>
+        </div>
+        <div id="radiusResolveResult" style="display:none;margin-top:14px"></div>
+      </div>
+    </div>
+
+    <!-- ══ SETTINGS ════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-settings">
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">TLS / mTLS параметры</div></div>
+          <button class="btn primary sm" id="btnSaveSettings"><span class="btn-label">Сохранить и перевыпустить cert</span><span class="spinner"></span></button>
+        </div>
+        <div class="form-grid">
+          <div class="field full">
+            <label>Клиентский API URL (mTLS)</label>
+            <input id="clientPublicURL" placeholder="https://192.168.0.241:9443" />
+          </div>
+          <div class="field">
+            <label>Server Name (SNI)</label>
+            <input id="serverName" placeholder="оставьте пустым — возьмётся из URL" />
+          </div>
+          <div class="field">
+            <label>Доп. SAN (через запятую)</label>
+            <input id="extraSANs" placeholder="192.168.0.241, host.local" />
+          </div>
+          <div class="field">
+            <label>Plugin listen addr</label>
+            <input id="pluginListenAddr" placeholder="0.0.0.0" />
+          </div>
+          <div class="field" style="max-width:160px">
+            <label>Plugin port</label>
+            <input id="pluginListenPort" placeholder="9443" />
+          </div>
+        </div>
+        <div class="text-small text-muted mt8">Cert сервера выпускается для localhost, всех локальных IP, адреса из URL и дополнительных SAN.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:14px">RADIUS аутентификация (прямая, для 2FA)</div>
+        <div class="form-grid">
+          <div class="field" style="max-width:160px"><label>RADIUS auth</label><select id="radiusEnabled"><option value="false">Выключено</option><option value="true">Включено</option></select></div>
+          <div class="field"><label>Host</label><input id="radiusHost" placeholder="radius.example.com" /></div>
+          <div class="field" style="max-width:120px"><label>Port</label><input id="radiusPort" placeholder="1812" /></div>
+          <div class="field"><label>Secret</label><input id="radiusSecret" type="password" /></div>
+          <div class="field" style="max-width:140px"><label>Timeout, сек</label><input id="radiusTimeout" placeholder="5" /></div>
+          <div class="field" style="max-width:120px"><label>Повторов</label><input id="radiusRetries" placeholder="1" /></div>
+          <div class="field"><label>NAS Identifier</label><input id="radiusNASIdentifier" placeholder="tlsctrl-agent" /></div>
+        </div>
+        <div class="btn-group mt8">
+          <input id="radiusTestUsername" placeholder="тест: логин" style="width:160px" />
+          <input id="radiusTestPassword" type="password" placeholder="тест: пароль" style="width:160px" />
+          <button class="btn sm" id="radiusSaveBtn"><span class="btn-label">Сохранить</span><span class="spinner"></span></button>
+          <button class="btn sm" id="radiusTestBtn">Тест</button>
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="tabPanel" data-panel="profiles">
-  <div class="grid2">
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div>
-          <div style="font-weight:800">VPN-профили</div>
-          <div class="muted small">Профили, которые агент синхронизирует в plugin через GovPP</div>
-        </div>
-        <div class="actions">
-          <button type="button" id="btnSyncVPN">Sync в plugin</button>
-          <button type="button" id="btnRefreshProfiles">Обновить профили</button>
-        </div>
-      </div>
-      <div class="tableWrap" style="max-height:34vh">
-        <table>
-          <thead>
-            <tr><th>Профиль</th><th>Pool</th><th>Маршрутизация</th><th>DNS/MTU/MSS</th><th>Обновлён</th><th>Действия</th></tr>
-          </thead>
-          <tbody id="profileRows"><tr><td colspan="6" class="muted">Нет данных</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card">
-      <div class="sectionHead">
-        <div>
-          <div style="font-weight:800">Управление профилями</div>
-          <div class="muted small">Создание и редактирование профиля открывается во всплывающем окне.</div>
-        </div>
-        <div class="headActions">
-          <button type="button" class="btnPrimary" id="btnOpenProfileModal">Создать профиль</button>
-        </div>
-      </div>
-      <div class="emptyNote">Выберите профиль в таблице слева для редактирования или создайте новый профиль через кнопку выше.</div>
-    </div>
-  </div>
-
-  </div>
-
-  <div class="tabPanel" data-panel="users">
-  <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <div>
-        <div style="font-weight:800">Пользователи и сессии</div>
-        <div class="muted small">Старый web сохранён, но статус теперь честно показывает: доступ учётки, profile и agent-session. Bind в plugin больше не притворяется старой session-моделью.</div>
-      </div>
-      <div><button type="button" id="btnRefresh">Обновить</button></div>
-    </div>
-    <div class="card" style="margin:12px 0 14px 0;background:#f9fbfe;box-shadow:none">
-      <div style="font-weight:800;margin-bottom:12px">Добавить / обновить пользователя</div>
-      <div class="row">
-        <div class="field"><label for="username">Учетная запись</label><input id="username" placeholder="например: demo-user" /></div>
-        <div class="field"><label for="certSerial">Cert serial</label><input id="certSerial" class="mono" placeholder="вручную" /></div>
-        <div class="field" style="max-width:180px"><label for="enabled">Доступ</label><select id="enabled"><option value="true">Включен</option><option value="false">Выключен</option></select></div>
-        <div class="field" style="max-width:220px"><label for="userProfile">Профиль</label><select id="userProfile"><option value="">Без профиля</option></select></div>
-        <div class="field"><label for="userEmail">Email</label><input id="userEmail" placeholder="user@example.com" /></div>
-        <div class="field" style="max-width:180px"><label for="userRequire2FA">Email 2FA</label><select id="userRequire2FA"><option value="false">Выключено</option><option value="true">Включено</option></select></div>
-        <div><button type="button" id="btnUpsert">Сохранить</button></div>
-      </div>
-      <div class="muted small">Форма перенесена в этот раздел, чтобы управление пользователями и активными сессиями было в одном месте.</div>
-    </div>
-    <div class="tableWrap">
-      <table>
-        <thead>
-          <tr>
-            <th class="statusCol">Статус</th><th>Учетная запись</th><th>Профиль</th><th>Email</th><th>2FA</th><th>IP</th><th>MAC</th><th>Пользователь ОС</th><th>Тип ОС</th><th>Версия ОС</th><th>Кол-во приложений</th><th>Последняя активность</th><th>Действия</th>
-          </tr>
-        </thead>
-        <tbody id="rows"><tr><td colspan="13" class="muted">Нет данных</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-  </div>
-  </div>
-</div>
-
-
-<div class="modalBg" id="infoBg">
-  <div class="modal" style="width:min(980px,100%)">
-    <div class="titleBar"><div style="font-weight:800">Сводная информация</div><button type="button" id="btnCloseInfo">Закрыть</button></div>
-    <div class="summaryShell">
-      <div class="summaryHero">
-        <div class="summaryHeroTitle">
-          <div class="muted small">Пользователь</div>
-          <div class="summaryUser" id="infoUsername">—</div>
-          <div class="summaryMeta">
-            <span class="pill pillMute" id="infoProfilePill">Профиль: —</span>
-            <span class="pill pillMute" id="infoSourcePill">Источник: —</span>
+    <!-- ══ SMTP ════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-smtp">
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">SMTP / Email 2FA</div></div>
+          <div class="btn-group">
+            <button class="btn sm" id="btnSaveSMTP"><span class="btn-label">Сохранить</span><span class="spinner"></span></button>
+            <button class="btn sm" id="btnTestSMTP">Тест отправки</button>
           </div>
         </div>
-        <div id="infoStatus" class="statusIcons"></div>
+        <div class="form-grid">
+          <div class="field" style="max-width:160px"><label>Email 2FA</label><select id="smtpEnabled"><option value="true">Включено</option><option value="false">Выключено</option></select></div>
+          <div class="field"><label>SMTP host</label><input id="smtpHost" placeholder="smtp.example.com" /></div>
+          <div class="field" style="max-width:120px"><label>Port</label><input id="smtpPort" placeholder="587" /></div>
+          <div class="field" style="max-width:160px"><label>Шифрование</label><select id="smtpSecurity"><option value="starttls">STARTTLS</option><option value="tls">SSL/TLS</option><option value="none">Без TLS</option></select></div>
+          <div class="field"><label>SMTP username</label><input id="smtpUsername" /></div>
+          <div class="field"><label>SMTP password</label><input id="smtpPassword" type="password" /></div>
+          <div class="field"><label>From email</label><input id="smtpFromEmail" placeholder="vpn@example.com" /></div>
+          <div class="field"><label>From name</label><input id="smtpFromName" placeholder="ZTNA Экран-М" /></div>
+          <div class="field"><label>Reply-To</label><input id="smtpReplyTo" /></div>
+          <div class="field"><label>Тема письма</label><input id="smtpSubjectTemplate" placeholder="Код подтверждения VPN" /></div>
+          <div class="field" style="max-width:130px"><label>TTL кода, сек</label><input id="smtpCodeTTL" placeholder="300" /></div>
+          <div class="field" style="max-width:120px"><label>Длина кода</label><input id="smtpCodeLength" placeholder="6" /></div>
+          <div class="field" style="max-width:120px"><label>Попыток</label><input id="smtpMaxAttempts" placeholder="5" /></div>
+          <div class="field"><label>Тест: email</label><input id="smtpTestTo" placeholder="user@example.com" /></div>
+          <div class="field full"><label>Шаблон письма</label><textarea id="smtpBodyTemplate" rows="4" placeholder="Ваш код: {{CODE}}"></textarea></div>
+        </div>
       </div>
+    </div>
 
-      <div class="summaryGrid">
-        <section class="summarySection">
-          <div class="summarySectionHead">Сетевые данные</div>
-          <div class="summarySectionBody summaryList">
-            <div class="summaryField">
-              <div class="summaryLabel">IP-адрес</div>
-              <div class="summaryValue mono" id="infoIP">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">MAC-адрес</div>
-              <div class="summaryValue mono" id="infoMAC">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Пользователь ОС</div>
-              <div class="summaryValue" id="infoSystemUser">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Источник</div>
-              <div class="summaryValue" id="infoSource">—</div>
-            </div>
-            <div class="summaryField summaryWide">
-              <div class="summaryLabel">Интерфейсы клиента</div>
-              <pre id="infoInterfaces" class="summaryInterfaces">—</pre>
-            </div>
-          </div>
-        </section>
+  </div><!-- /content -->
+</main>
 
-        <section class="summarySection">
-          <div class="summarySectionHead">Система и активность</div>
-          <div class="summarySectionBody summaryList">
-            <div class="summaryField">
-              <div class="summaryLabel">Тип ОС</div>
-              <div class="summaryValue" id="infoOSName">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Версия ОС</div>
-              <div class="summaryValue" id="infoOSVersion">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Аптайм системы</div>
-              <div class="summaryValue" id="infoSystemUptime">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Подключен с</div>
-              <div class="summaryValue" id="infoConnectedAt">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Последняя активность</div>
-              <div class="summaryValue" id="infoLastSeen">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Отчёт по приложениям</div>
-              <div class="summaryValue" id="infoAppsUpdatedAt">—</div>
-            </div>
-          </div>
-        </section>
+<!-- ══ Toast container ════════════════════════════════════════════════════ -->
+<div id="toastContainer"></div>
 
-        <section class="summarySection">
-          <div class="summarySectionHead">Учётные данные и сертификат</div>
-          <div class="summarySectionBody summaryList">
-            <div class="summaryField">
-              <div class="summaryLabel">Учётная запись</div>
-              <div class="summaryValue" id="infoUsername2">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Профиль</div>
-              <div class="summaryValue" id="infoProfileText">—</div>
-            </div>
-            <div class="summaryField summaryWide">
-              <div class="summaryLabel">Cert serial</div>
-              <div class="summaryValue mono" id="infoCertSerial">—</div>
-            </div>
-          </div>
-        </section>
-
-        <section class="summarySection">
-          <div class="summarySectionHead">Приложения</div>
-          <div class="summarySectionBody summaryList">
-            <div class="summaryField">
-              <div class="summaryLabel">Количество приложений</div>
-              <div class="summaryValue" id="infoAppsCount">—</div>
-            </div>
-            <div class="summaryField">
-              <div class="summaryLabel">Статус runtime</div>
-              <div class="summaryValue" id="infoRuntimeText">—</div>
-            </div>
-          </div>
-        </section>
-      </div>
+<!-- ══ Confirm dialog ════════════════════════════════════════════════════ -->
+<div id="confirmBg">
+  <div id="confirmBox">
+    <h3 id="confirmTitle">Подтверждение</h3>
+    <p id="confirmMsg"></p>
+    <div class="btn-group">
+      <button class="btn sm" id="confirmCancel">Отмена</button>
+      <button class="btn danger sm" id="confirmOk">Подтвердить</button>
     </div>
   </div>
 </div>
 
+<!-- ══ FLOATING ACTION MENU ══════════════════════════════════════════════ -->
+<div class="floating-menu" id="userActionMenu"></div>
 
-<div class="modalBg" id="appsBg">
-  <div class="modal" style="width:min(1200px,100%)">
-    <div class="titleBar">
-      <div style="font-weight:800">Список приложений: <span id="appsUsername">—</span></div>
-      <button type="button" id="btnCloseApps">Закрыть</button>
+<!-- ══ MODALS ════════════════════════════════════════════════════════════ -->
+
+<!-- Info / Summary drawer -->
+<div class="drawer-bg" id="infoBgOverlay"></div>
+<div class="drawer" id="infoBg">
+  <div class="drawer-header">
+    <h2 id="infoUsername">—</h2>
+    <button class="btn sm" id="btnCloseInfo">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div id="infoStatus" style="margin-bottom:16px"></div>
+    <div class="section-label">Сеть</div>
+    <div class="kv-list">
+      <div class="kv-row"><div class="k">IP-адрес</div><div class="v mono" id="infoIP">—</div></div>
+      <div class="kv-row"><div class="k">MAC</div><div class="v mono" id="infoMAC">—</div></div>
+      <div class="kv-row"><div class="k">Пользователь ОС</div><div class="v" id="infoSystemUser">—</div></div>
+      <div class="kv-row"><div class="k">Источник</div><div class="v" id="infoSource">—</div></div>
     </div>
-    <div class="row" style="margin-bottom:12px">
-      <div class="field">
-        <label for="appsSearch">Поиск</label>
-        <input id="appsSearch" placeholder="имя, путь, PID" />
-      </div>
-      <div class="field" style="max-width:240px">
-        <label for="appsCategory">Категория</label>
-        <select id="appsCategory"><option value="">Все категории</option></select>
-      </div>
-      <div class="field" style="max-width:240px">
-        <label>Статус</label>
-        <input id="appsStatus" readonly />
-      </div>
-      <div><button type="button" id="btnAppsRefresh">Обновить список</button></div>
+    <div class="section-label">Система</div>
+    <div class="kv-list">
+      <div class="kv-row"><div class="k">ОС</div><div class="v" id="infoOSName">—</div></div>
+      <div class="kv-row"><div class="k">Версия</div><div class="v" id="infoOSVersion">—</div></div>
+      <div class="kv-row"><div class="k">Аптайм</div><div class="v" id="infoSystemUptime">—</div></div>
+      <div class="kv-row"><div class="k">Подключён с</div><div class="v" id="infoConnectedAt">—</div></div>
+      <div class="kv-row"><div class="k">Последняя активность</div><div class="v" id="infoLastSeen">—</div></div>
     </div>
-    <div class="tableWrap" style="max-height:52vh">
-      <table>
-        <thead>
-          <tr>
-            <th>Приложение</th>
-            <th>Категория</th>
-            <th>PID</th>
-            <th>Время работы</th>
-            <th>Путь</th>
-            <th>Политика</th>
-          </tr>
-        </thead>
-        <tbody id="appsRows"><tr><td colspan="6" class="muted">Нет данных</td></tr></tbody>
-      </table>
+    <div class="section-label">Учётная запись</div>
+    <div class="kv-list">
+      <div class="kv-row"><div class="k">Пользователь</div><div class="v" id="infoUsername2">—</div></div>
+      <div class="kv-row"><div class="k">Профиль</div><div class="v" id="infoProfileText">—</div></div>
+      <div class="kv-row"><div class="k">Cert serial</div><div class="v mono" id="infoCertSerial">—</div></div>
+      <div class="kv-row"><div class="k">Runtime</div><div class="v" id="infoRuntimeText">—</div></div>
+      <div class="kv-row"><div class="k">Приложений</div><div class="v" id="infoAppsCount">—</div></div>
+      <div class="kv-row"><div class="k">Отчёт приложений</div><div class="v" id="infoAppsUpdatedAt">—</div></div>
+    </div>
+    <div class="section-label">Интерфейсы</div>
+    <pre id="infoInterfaces" style="font:12px var(--font-mono);background:#f8fafc;border:1px solid var(--border2);border-radius:8px;padding:10px;max-height:180px;overflow:auto;white-space:pre-wrap">—</pre>
+    <div style="margin-top:12px">
+      <span class="badge mute" id="infoProfilePill" style="margin-right:6px">Профиль: —</span>
+      <span class="badge mute" id="infoSourcePill">Источник: —</span>
     </div>
   </div>
 </div>
 
-
-<div class="modalBg" id="roadmapBg">
-  <div class="modal" style="width:min(1100px,100%)">
-    <div class="titleBar">
-      <div style="font-weight:800">Сессии подключений: <span id="roadmapUsername">—</span></div>
-      <button type="button" id="btnCloseRoadmap">Закрыть</button>
-    </div>
-    <div class="muted small" style="margin-bottom:12px">Roadmap строится по наблюдаемым состояниям клиента в UI. Это не дамп низкоуровневых TLS-пакетов, а наглядная лента жизненного цикла сессии.</div>
-    <div class="roadmapList" id="roadmapList">
-      <div class="roadmapEmpty">Нет данных</div>
-    </div>
-  </div>
-</div>
-
-
+<!-- Cert info modal -->
 <div class="modalBg" id="certBg">
-  <div class="modal" style="width:min(980px,100%)">
-    <div class="titleBar">
-      <div style="font-weight:800">Просмотр сертификата: <span id="certUsernameTitle">—</span></div>
-      <button type="button" id="btnCloseCert">Закрыть</button>
+  <div class="modal" style="width:min(900px,100%)">
+    <div class="modal-header">
+      <h2>Сертификат: <span id="certUsernameTitle">—</span></h2>
+      <button class="btn sm" id="btnCloseCert">✕</button>
     </div>
-    <div class="grid2">
-      <div class="kv"><div class="k">Учетная запись</div><div class="v" id="certUsername">—</div></div>
-      <div class="kv"><div class="k">Серийный номер</div><div class="v mono" id="certSerial">—</div></div>
-      <div class="kv"><div class="k">Subject CN</div><div class="v" id="certSubject">—</div></div>
-      <div class="kv"><div class="k">Issuer CN</div><div class="v" id="certIssuer">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">Полный Subject</div><div class="v mono" id="certSubjectFull">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">Полный Issuer</div><div class="v mono" id="certIssuerFull">—</div></div>
-      <div class="kv"><div class="k">Действует с</div><div class="v" id="certNotBefore">—</div></div>
-      <div class="kv"><div class="k">Действует до</div><div class="v" id="certNotAfter">—</div></div>
-      <div class="kv"><div class="k">Алгоритм ключа</div><div class="v" id="certKeyAlg">—</div></div>
-      <div class="kv"><div class="k">Размер ключа</div><div class="v" id="certKeyBits">—</div></div>
-      <div class="kv"><div class="k">Signature algorithm</div><div class="v" id="certSignature">—</div></div>
-      <div class="kv"><div class="k">Ext Key Usage</div><div class="v" id="certEKU">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">SAN</div><div class="v mono" id="certSANs">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">SHA1</div><div class="v mono" id="certFingerprintSha1">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">SHA256</div><div class="v mono" id="certFingerprintSha256">—</div></div>
-      <div class="kv"><div class="k">Bundle server URL</div><div class="v" id="certBundleURL">—</div></div>
-      <div class="kv"><div class="k">Bundle server name</div><div class="v" id="certBundleName">—</div></div>
-      <div class="kv"><div class="k">Статус пользователя</div><div class="v" id="certEnabled">—</div></div>
-      <div class="kv"><div class="k">Generation</div><div class="v" id="certGeneration">—</div></div>
-      <div class="kv" style="grid-column:1 / span 2"><div class="k">Примечание</div><div class="v" id="certNote">—</div></div>
+    <div class="form-grid cols2">
+      <div class="kv-row"><div class="k">Пользователь</div><div class="v" id="certUsername">—</div></div>
+      <div class="kv-row"><div class="k">Серийный номер</div><div class="v mono" id="certSerial">—</div></div>
+      <div class="kv-row"><div class="k">Subject CN</div><div class="v" id="certSubject">—</div></div>
+      <div class="kv-row"><div class="k">Issuer CN</div><div class="v" id="certIssuer">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">Subject</div><div class="v mono" id="certSubjectFull">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">Issuer</div><div class="v mono" id="certIssuerFull">—</div></div>
+      <div class="kv-row"><div class="k">Действует с</div><div class="v" id="certNotBefore">—</div></div>
+      <div class="kv-row"><div class="k">Действует до</div><div class="v" id="certNotAfter">—</div></div>
+      <div class="kv-row"><div class="k">Алгоритм</div><div class="v" id="certKeyAlg">—</div></div>
+      <div class="kv-row"><div class="k">Размер ключа</div><div class="v" id="certKeyBits">—</div></div>
+      <div class="kv-row"><div class="k">Signature</div><div class="v" id="certSignature">—</div></div>
+      <div class="kv-row"><div class="k">EKU</div><div class="v" id="certEKU">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">SAN</div><div class="v mono" id="certSANs">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">SHA1</div><div class="v mono" id="certFingerprintSha1">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">SHA256</div><div class="v mono" id="certFingerprintSha256">—</div></div>
+      <div class="kv-row"><div class="k">Bundle URL</div><div class="v" id="certBundleURL">—</div></div>
+      <div class="kv-row"><div class="k">Bundle name</div><div class="v" id="certBundleName">—</div></div>
+      <div class="kv-row"><div class="k">Статус</div><div class="v" id="certEnabled">—</div></div>
+      <div class="kv-row"><div class="k">Generation</div><div class="v" id="certGeneration">—</div></div>
+      <div class="kv-row" style="grid-column:1/-1"><div class="k">Примечание</div><div class="v" id="certNote">—</div></div>
     </div>
-    <div class="certActions">
-      <button type="button" id="btnCopyCertSummary">Скопировать состав</button>
-      <button type="button" id="btnCopyCertPem">Скопировать PEM</button>
+    <div class="btn-group mt8">
+      <button class="btn sm" id="btnCopyCertSummary">Скопировать состав</button>
+      <button class="btn sm" id="btnCopyCertPem">Скопировать PEM</button>
+    </div>
+    <div class="field mt8"><label>Состав</label><textarea id="certCopyText" readonly style="height:120px;font:12px var(--font-mono)"></textarea></div>
+    <div class="field mt8"><label>PEM</label><textarea id="certPEM" readonly style="height:120px;font:12px var(--font-mono)"></textarea></div>
+  </div>
+</div>
+
+<!-- Apps modal -->
+<div class="modalBg" id="appsBg">
+  <div class="modal" style="width:min(1100px,100%)">
+    <div class="modal-header">
+      <h2>Приложения: <span id="appsUsername">—</span></h2>
+      <button class="btn sm" id="btnCloseApps">✕</button>
+    </div>
+    <div class="btn-group" style="margin-bottom:12px">
+      <input class="search-input" id="appsSearch" placeholder="Имя, путь, PID" />
+      <select id="appsCategory" style="width:200px"><option value="">Все категории</option></select>
+      <input id="appsStatus" readonly style="flex:1;background:#f8fafc;min-width:200px" />
+      <button class="btn sm" id="btnAppsRefresh">Обновить список</button>
+    </div>
+    <div class="table-wrap" style="max-height:52vh">
+      <table>
+        <thead><tr><th>Приложение</th><th>Категория</th><th>PID</th><th>Время работы</th><th>Путь</th><th>Политика</th></tr></thead>
+        <tbody id="appsRows"><tr><td colspan="6"><div class="empty-state"><p>Нажмите «Обновить список»</p></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Roadmap modal -->
+<div class="modalBg" id="roadmapBg">
+  <div class="modal" style="width:min(900px,100%)">
+    <div class="modal-header">
+      <h2>Сессии: <span id="roadmapUsername">—</span></h2>
+      <button class="btn sm" id="btnCloseRoadmap">✕</button>
+    </div>
+    <div class="text-small text-muted" style="margin-bottom:14px">История состояний клиента. Не дамп TLS-пакетов — наглядная лента жизненного цикла сессии.</div>
+    <div id="roadmapList"><div class="empty-state"><div class="empty-icon">🧭</div><p>Нет данных</p></div></div>
+  </div>
+</div>
+
+<!-- Profile modal -->
+<div class="modalBg" id="profileBg">
+  <div class="modal" style="width:min(860px,100%)">
+    <div class="modal-header">
+      <h2 id="profileModalTitle">Создать профиль</h2>
+      <button class="btn sm" id="btnCloseProfileModal">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Имя профиля</label><input id="profileName" placeholder="default" /></div>
+      <div class="field"><label>Pool name</label><input id="profilePoolName" placeholder="corp" /></div>
+      <div class="field"><label>Pool subnet</label><input id="profilePoolSubnet" placeholder="10.90.0.0/24" /></div>
+      <div class="field"><label>Pool gateway</label><input id="profilePoolGateway" placeholder="10.90.0.1" /></div>
+      <div class="field" style="max-width:160px"><label>Lease seconds</label><input id="profileLeaseSeconds" placeholder="3600" /></div>
+      <div class="field" style="max-width:150px"><label>Full tunnel</label><select id="profileFullTunnel"><option value="true">Да</option><option value="false">Нет</option></select></div>
+      <div class="field"><label>DNS servers</label><input id="profileDNSServers" placeholder="1.1.1.1,8.8.8.8" /></div>
+      <div class="field"><label>Include routes</label><input id="profileIncludeRoutes" placeholder="10.0.0.0/8 или 192.17.0.5/32" /></div>
+      <div class="field"><label>Exclude routes</label><input id="profileExcludeRoutes" placeholder="192.168.0.0/24" /></div>
+      <div class="field" style="max-width:120px"><label>MTU</label><input id="profileMTU" placeholder="1400" /></div>
+      <div class="field" style="max-width:130px"><label>MSS clamp</label><input id="profileMSSClamp" placeholder="1360" /></div>
+      <div class="field"><label>Примечание</label><input id="profileNote" /></div>
+    </div>
+    <div class="btn-group" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn sm" id="btnCloseProfileModal2">Отмена</button>
+      <button class="btn primary sm" id="btnSaveProfile"><span class="btn-label">Сохранить профиль</span><span class="spinner"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Policy modal -->
+<div class="modalBg" id="policyBg">
+  <div class="modal" style="width:min(900px,100%)">
+    <div class="modal-header">
+      <h2 id="policyModalTitle">Создать политику</h2>
+      <button class="btn sm" id="btnClosePolicyModal">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>ID политики</label><input id="policyId" placeholder="deny-remote-tools" /></div>
+      <div class="field"><label>Название</label><input id="policyName" placeholder="Запрет VPN и мессенджеров" /></div>
+      <div class="field" style="max-width:160px"><label>Статус</label><select id="policyEnabled"><option value="true">Включена</option><option value="false">Выключена</option></select></div>
+      <div class="field" style="max-width:200px"><label>Режим</label><select id="policyMode"><option value="deny_on_match">deny_on_match</option></select></div>
+      <div class="field" style="max-width:200px"><label>Scope</label><select id="policyScopeMode"><option value="all">Все пользователи</option><option value="profiles">По профилям</option><option value="users">По пользователям</option></select></div>
+      <div class="field"><label>Профили</label><input id="policyProfiles" placeholder="default, corp" /></div>
+      <div class="field"><label>Пользователи</label><input id="policyUsers" placeholder="user1, user2" /></div>
+      <div class="field full"><label>Сообщение пользователю</label><input id="policyMessage" placeholder="У вас обнаружено запрещенное приложение" /></div>
+    </div>
+    <div style="margin:12px 0 8px;display:flex;gap:20px">
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="policyCheckOnClient" checked />Проверять на клиенте</label>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="policyCheckOnServer" />Проверять на сервере</label>
+    </div>
+    <div class="field" style="margin-bottom:10px">
+      <label>Популярные категории</label>
+      <div id="policyPresetList" class="preset-grid" style="margin-top:6px"></div>
     </div>
     <div class="field">
-      <label for="certCopyText">Состав сертификата</label>
-      <textarea id="certCopyText" class="certTextArea" readonly></textarea>
+      <label>Свои шаблоны (одно правило на строку)</label>
+      <textarea id="policyPatterns" rows="5" placeholder="vpn&#10;mattermost&#10;regex:wireguard|openvpn"></textarea>
     </div>
-    <div class="field" style="margin-top:12px">
-      <label for="certPEM">PEM сертификата</label>
-      <textarea id="certPEM" class="certTextArea" readonly></textarea>
+    <div class="btn-group" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn sm" id="btnClosePolicyModal2">Отмена</button>
+      <button class="btn primary sm" id="btnSavePolicy"><span class="btn-label">Сохранить политику</span><span class="spinner"></span></button>
     </div>
   </div>
 </div>
 
-<div class="modalBg" id="policyBg">
-  <div class="modal" style="width:min(980px,100%)">
-    <div class="titleBar"><div style="font-weight:800" id="policyModalTitle">Создать политику приложений</div><button type="button" id="btnClosePolicyModal">Закрыть</button></div>
-    <div class="row">
-      <div class="field"><label for="policyId">ID политики</label><input id="policyId" placeholder="deny-remote-tools" /></div>
-      <div class="field"><label for="policyName">Название</label><input id="policyName" placeholder="Запрет VPN и мессенджеров" /></div>
-      <div class="field" style="max-width:220px"><label for="policyEnabled">Статус</label><select id="policyEnabled"><option value="true">Включена</option><option value="false">Выключена</option></select></div>
-      <div class="field" style="max-width:220px"><label for="policyMode">Режим</label><select id="policyMode"><option value="deny_on_match">deny_on_match</option></select></div>
+<!-- Source modal -->
+<div class="modalBg" id="sourceBg">
+  <div class="modal" style="width:min(700px,100%)">
+    <div class="modal-header">
+      <h2 id="sourceModalTitle">Добавить источник FreeRADIUS</h2>
+      <button class="btn sm" id="btnCloseSourceModal">✕</button>
     </div>
-    <div class="row">
-      <div class="field" style="max-width:220px"><label for="policyScopeMode">Scope</label><select id="policyScopeMode"><option value="all">Все пользователи</option><option value="profiles">По профилям</option><option value="users">По пользователям</option></select></div>
-      <div class="field"><label for="policyProfiles">Профили</label><input id="policyProfiles" placeholder="default, corp" /></div>
-      <div class="field"><label for="policyUsers">Пользователи</label><input id="policyUsers" placeholder="user1, user2" /></div>
+    <div class="form-grid">
+      <div class="field"><label>ID источника</label><input id="srcId" placeholder="corp-radius" /><div class="hint">Латиница, цифры, дефис. Например: fr-mysql-main</div></div>
+      <div class="field"><label>Имя</label><input id="srcName" placeholder="Корпоративный FreeRADIUS" /></div>
+      <div class="field" style="max-width:140px"><label>Статус</label><select id="srcEnabled"><option value="true">Включён</option><option value="false">Выключен</option></select></div>
+      <div class="field" style="max-width:160px"><label>Интервал sync, сек</label><input id="srcSyncSec" value="120" /></div>
+      <div class="field full"><label>Тип источника</label><select id="srcType"><option value="freeradius_sql">freeradius_sql — MySQL / PostgreSQL / SQLite</option><option value="freeradius_files">freeradius_files — файл authorize (локальный или SSH)</option></select></div>
     </div>
-    <div class="row">
-      <div class="field" style="flex:2 1 420px"><label for="policyMessage">Сообщение пользователю</label><input id="policyMessage" placeholder="У вас обнаружено запрещенное приложение" /></div>
-      <div class="field" style="flex:1 1 320px">
-        <label>Где проверять</label>
-        <div class="row" style="gap:18px;align-items:center;padding-top:10px">
-          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="policyCheckOnClient" checked />проверять на клиенте</label>
-          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="policyCheckOnServer" />проверять на сервере</label>
+
+    <div id="srcPanelSQL">
+      <div class="section-label">Подключение к базе данных</div>
+      <div class="form-grid">
+        <div class="field" style="max-width:200px"><label>СУБД</label><select id="sqlEngine"><option value="mysql">MySQL / MariaDB</option><option value="postgres">PostgreSQL</option><option value="sqlite">SQLite (файл)</option></select></div>
+      </div>
+      <div id="sqlMysqlFields" class="form-grid">
+        <div class="field"><label>Хост</label><input id="sqlHost" placeholder="127.0.0.1" /></div>
+        <div class="field" style="max-width:110px"><label>Порт</label><input id="sqlPort" placeholder="3306" /></div>
+        <div class="field"><label>Пользователь</label><input id="sqlUser" placeholder="radius" /></div>
+        <div class="field"><label>Пароль</label><input id="sqlPass" type="password" /></div>
+        <div class="field"><label>База данных</label><input id="sqlDB" placeholder="radius" /></div>
+      </div>
+      <div id="sqlSQLiteFields" class="form-grid" style="display:none">
+        <div class="field full"><label>Путь к файлу .db</label><input id="sqlitePath" placeholder="/var/lib/freeradius/radius.db" /></div>
+      </div>
+      <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--border2);border-radius:9px;padding:10px">
+        <div class="text-small text-muted" style="margin-bottom:3px">DSN</div>
+        <div id="sqlDSNPreview" class="mono" style="font-size:12px;color:var(--text);word-break:break-all">—</div>
+      </div>
+    </div>
+
+    <div id="srcPanelFiles" style="display:none">
+      <div class="section-label">Файл authorize</div>
+      <div class="form-grid">
+        <div class="field" style="max-width:200px"><label>Способ доступа</label><select id="fileMode"><option value="ssh">SSH (удалённый хост)</option><option value="local">Локальный файл</option></select></div>
+      </div>
+      <div id="fileSshFields">
+        <div class="form-grid">
+          <div class="field"><label>SSH пользователь</label><input id="sshUser" placeholder="ngfw" /></div>
+          <div class="field"><label>SSH хост</label><input id="sshHost" placeholder="192.168.1.122" /></div>
+          <div class="field" style="max-width:110px"><label>SSH порт</label><input id="sshPort" placeholder="22" /></div>
+        </div>
+        <div class="form-grid" style="margin-top:10px">
+          <div class="field full"><label>Путь к файлу на хосте</label><input id="sshRemotePath" placeholder="/etc/freeradius/3.0/mods-config/files/authorize" /></div>
+          <div class="field"><label>SSH ключ (необязательно)</label><input id="sshKeyPath" placeholder="/home/ngfw/.ssh/id_ed25519" /><div class="hint">Оставьте пустым — агент найдёт ключ автоматически</div></div>
+          <div class="field" style="max-width:150px"><label>Таймаут, сек</label><input id="sshTimeout" placeholder="20" /></div>
+        </div>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:10px;margin-top:10px">
+          <div style="font-size:12px;font-weight:700;color:var(--ok);margin-bottom:4px">Одноразовая настройка SSH-доступа</div>
+          <div class="mono text-small" id="sshCopyIdHint" style="background:#fff;display:inline-block;padding:3px 8px;border-radius:6px">ssh-copy-id ngfw@host</div>
         </div>
       </div>
-    </div>
-    <div class="row">
-      <div class="field" style="flex:2 1 100%">
-        <label>Популярные приложения и категории</label>
-        <div class="muted small" style="margin-bottom:8px">Отметьте галочками готовые категории, а свои шаблоны добавьте ниже.</div>
-        <div id="policyPresetList" class="presetGrid"></div>
+      <div id="fileLocalFields" style="display:none">
+        <div class="form-grid"><div class="field full"><label>Локальный путь к файлу</label><input id="localFilePath" placeholder="/etc/freeradius/3.0/mods-config/files/authorize" /></div></div>
+      </div>
+      <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--border2);border-radius:9px;padding:10px">
+        <div class="text-small text-muted" style="margin-bottom:3px">DSN</div>
+        <div id="filesDSNPreview" class="mono" style="font-size:12px;color:var(--text);word-break:break-all">—</div>
       </div>
     </div>
-    <div class="row">
-      <div class="field" style="flex:2 1 100%"><label for="policyPatterns">Свои шаблоны</label><textarea id="policyPatterns" rows="6" placeholder="vpn
-mattermost
-regex:wireguard|openvpn"></textarea></div>
-    </div>
-    <div class="headActions" style="justify-content:flex-end;margin-top:12px">
-      <button type="button" id="btnSavePolicy">Сохранить политику</button>
+
+    <div class="btn-group" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn primary sm" id="btnSaveSource"><span class="btn-label">Сохранить источник</span><span class="spinner"></span></button>
     </div>
   </div>
 </div>
 
-<div class="floatingMenu" id="userActionMenu"></div>
 
+<!-- Hidden elements required by JS (not visible in UI but referenced) -->
+<span id="healthInfo" style="display:none"></span>
+<span id="kpiServerName" style="display:none"></span>
+<input id="userRadiusUsername" style="display:none" />
+<select id="userTwoFAMethod" style="display:none"><option value="email">email</option></select>
+<script src="./app.fixed.js?v=20260421-radius-tab-v2"></script>
 
+<!-- ── POLISH: Status dots, action buttons, sessions, floating menu ── -->
+<style>
+/* ───────────────────────────────────────────────────────────
+   STATUS DOTS  (stateDot / stateOn / stateOff / stateWarn / stateBad / stateInfo)
+   ─────────────────────────────────────────────────────────── */
 
-<div class="modalBg" id="profileBg">
-  <div class="modal" style="width:min(980px,100%)">
-    <div class="titleBar"><div style="font-weight:800" id="profileModalTitle">Создать / обновить профиль</div><button type="button" id="btnCloseProfileModal">Закрыть</button></div>
-    <div class="row">
-      <div class="field"><label for="profileName">Имя профиля</label><input id="profileName" placeholder="default" /></div>
-      <div class="field"><label for="profilePoolName">Pool name</label><input id="profilePoolName" placeholder="corp" /></div>
-      <div class="field"><label for="profilePoolSubnet">Pool subnet</label><input id="profilePoolSubnet" placeholder="10.90.0.0/24" /></div>
-      <div class="field"><label for="profilePoolGateway">Pool gateway</label><input id="profilePoolGateway" placeholder="10.90.0.1" /></div>
-    </div>
-    <div class="row">
-      <div class="field" style="max-width:180px"><label for="profileLeaseSeconds">Lease seconds</label><input id="profileLeaseSeconds" placeholder="3600" /></div>
-      <div class="field" style="max-width:180px"><label for="profileFullTunnel">Full tunnel</label><select id="profileFullTunnel"><option value="true">Да</option><option value="false">Нет</option></select></div>
-      <div class="field"><label for="profileDNSServers">DNS servers</label><input id="profileDNSServers" placeholder="1.1.1.1,8.8.8.8" /></div>
-      <div class="field"><label for="profileIncludeRoutes">Include routes</label><input id="profileIncludeRoutes" placeholder="10.0.0.0/8,192.168.0.0/16" /></div>
-    </div>
-    <div class="row">
-      <div class="field"><label for="profileExcludeRoutes">Exclude routes</label><input id="profileExcludeRoutes" placeholder="192.168.0.0/24" /></div>
-      <div class="field" style="max-width:160px"><label for="profileMTU">MTU</label><input id="profileMTU" placeholder="1400" /></div>
-      <div class="field" style="max-width:160px"><label for="profileMSSClamp">MSS clamp</label><input id="profileMSSClamp" placeholder="1360" /></div>
-      <div class="field"><label for="profileNote">Примечание</label><input id="profileNote" placeholder="описание профиля" /></div>
-    </div>
-    <div class="headActions" style="justify-content:flex-end;margin-top:12px">
-      <button type="button" id="btnSaveProfile">Сохранить профиль</button>
-    </div>
-  </div>
-</div>
+.stateDot {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  border: 2px solid;
+  flex-shrink: 0;
+  cursor: help;
+  transition: transform .12s ease, filter .12s ease;
+  position: relative;
+}
+.stateDot:hover { transform: scale(1.18); filter: brightness(.95); z-index: 2; }
 
-<script src="./app.js?v=20260407-policy-check-modes-fixed18"></script>
+.stateOn  { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+.stateOff { background: #f1f5f9; color: #94a3b8; border-color: #cbd5e1; }
+.stateWarn{ background: #fef9c3; color: #92400e; border-color: #fde047; }
+.stateBad { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.stateInfo{ background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+
+/* Pulse for active */
+.stateOn { animation: pulseGreen 3s ease infinite; }
+@keyframes pulseGreen {
+  0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,.35); }
+  50%      { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+}
+.stateBad { animation: pulseRed 2s ease infinite; }
+@keyframes pulseRed {
+  0%,100% { box-shadow: 0 0 0 0 rgba(252,165,165,.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(252,165,165,0); }
+}
+
+.statusIcons { display: flex; gap: 5px; align-items: center; }
+.statusCell, .statusCol { width: 120px; min-width: 120px; }
+
+/* ───────────────────────────────────────────────────────────
+   ICON ACTION BUTTONS  (iconBtn)
+   ─────────────────────────────────────────────────────────── */
+
+.iconBtn {
+  width: 32px; height: 32px; min-width: 32px;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  border: 1.5px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .1s;
+  flex-shrink: 0;
+  color: inherit;
+}
+.iconBtn:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  transform: scale(1.12);
+}
+.iconBtn:active { transform: scale(.92); }
+
+/* The ⋯ button is slightly more prominent */
+.iconBtn[data-action="menu"] {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -.5px;
+  color: #64748b;
+}
+.iconBtn[data-action="menu"]:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #1e293b;
+}
+
+/* Actions column: subtle until hover, always visible */
+.actions {
+  display: flex; gap: 4px; align-items: center;
+}
+td .actions { opacity: .3; transition: opacity .15s; }
+tr:hover td .actions { opacity: 1; }
+
+/* ───────────────────────────────────────────────────────────
+   FLOATING ACTION MENU  (#userActionMenu)
+   ─────────────────────────────────────────────────────────── */
+
+#userActionMenu {
+  position: fixed;
+  display: none;
+  z-index: 9999;
+  min-width: 230px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow:
+    0 4px 6px -1px rgba(0,0,0,.07),
+    0 10px 30px -3px rgba(0,0,0,.12),
+    0 0 0 1px rgba(0,0,0,.03);
+  padding: 6px;
+  overflow: hidden;
+}
+#userActionMenu.open {
+  display: block;
+  animation: menuPop .18s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes menuPop {
+  from { opacity: 0; transform: scale(.93) translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color: #1e293b;
+  text-align: left;
+  cursor: pointer;
+  transition: background .1s;
+}
+.menuItem:hover { background: #f0f7ff; }
+.menuItem:active { background: #dbeafe; }
+
+/* Last two items = danger zone */
+.menuItem:nth-last-child(-n+2):not(.menuDivider) { color: #dc2626; }
+.menuItem:nth-last-child(-n+2):hover { background: #fef2f2; }
+
+.menuDivider { height: 1px; background: #f1f5f9; margin: 4px 0; }
+
+/* ───────────────────────────────────────────────────────────
+   SESSIONS TABLE  (#sessionRows)
+   ─────────────────────────────────────────────────────────── */
+
+#sessionRows tr { cursor: pointer; }
+#sessionRows tr:hover td { background: #f8fafd; }
+#sessionRows tr.row-active td { background: #f0fdf4; }
+#sessionRows tr.row-blocked td { background: #fef2f2; }
+
+/* ───────────────────────────────────────────────────────────
+   USERS TABLE  (#rows)
+   ─────────────────────────────────────────────────────────── */
+
+#rows tr { cursor: pointer; }
+#rows tr:hover td { background: #f8fafd; }
+
+/* ───────────────────────────────────────────────────────────
+   PILLS (used in renderUsers)
+   ─────────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 99px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.pillOk   { background: #d1fae5; color: #065f46; }
+.pillBad  { background: #fee2e2; color: #991b1b; }
+.pillWarn { background: #fef9c3; color: #92400e; }
+.pillInfo { background: #dbeafe; color: #1e40af; }
+.pillMute { background: #f1f5f9; color: #64748b; }
+
+.appDeniedRow td { background: #fef2f2 !important; }
+.appDeniedRow td .mono { color: #991b1b; }
+
+/* ───────────────────────────────────────────────────────────
+   TOAST NOTIFICATIONS
+   ─────────────────────────────────────────────────────────── */
+
+#toastContainer {
+  position: fixed; bottom: 24px; right: 24px;
+  z-index: 9999; display: flex; flex-direction: column-reverse; gap: 8px;
+  max-width: 360px; pointer-events: none;
+}
+.toast {
+  pointer-events: all;
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 13px 16px;
+  border-radius: 12px;
+  background: #1e293b;
+  border-left: 3px solid #475569;
+  color: #e2e8f0;
+  font-size: 13px; line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  animation: toastIn .22s cubic-bezier(.34,1.4,.64,1);
+}
+.toast.ok   { border-color: #34d399; }
+.toast.bad  { border-color: #f87171; }
+.toast.warn { border-color: #fbbf24; }
+.toast.info { border-color: #60a5fa; }
+.toast-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+.toast-body { flex: 1; }
+.toast-close { cursor: pointer; color: #64748b; font-size: 14px; flex-shrink: 0; padding: 0 0 0 6px; transition: color .1s; }
+.toast-close:hover { color: #e2e8f0; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(16px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────
+   CONFIRM DIALOG
+   ─────────────────────────────────────────────────────────── */
+
+#confirmBg {
+  position: fixed; inset: 0;
+  background: rgba(15,23,42,.5);
+  backdrop-filter: blur(3px);
+  display: none; align-items: center; justify-content: center;
+  z-index: 8888;
+}
+#confirmBg.open { display: flex; }
+#confirmBox {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px 26px;
+  width: min(380px, 90vw);
+  box-shadow: 0 20px 60px rgba(0,0,0,.18);
+  animation: modalIn .2s cubic-bezier(.34,1.2,.64,1);
+}
+#confirmBox h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+#confirmBox p  { font-size: 13px; color: #64748b; margin-bottom: 20px; line-height: 1.55; }
+#confirmBox .btn-group { justify-content: flex-end; }
+
+/* ───────────────────────────────────────────────────────────
+   MODAL / DRAWER ANIMATIONS
+   ─────────────────────────────────────────────────────────── */
+
+.modalBg { backdrop-filter: blur(3px); }
+.modal { animation: modalIn .2s cubic-bezier(.34,1.2,.64,1); }
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(.95) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.drawer.open { animation: drawerIn .22s cubic-bezier(.34,1.1,.64,1); }
+@keyframes drawerIn {
+  from { transform: translateX(100%); }
+  to   { transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────
+   NAV & SIDEBAR POLISH
+   ─────────────────────────────────────────────────────────── */
+
+.nav-item {
+  position: relative;
+  transition: background .12s, color .12s;
+}
+.nav-item::before {
+  content: '';
+  position: absolute; left: 0; top: 20%; bottom: 20%;
+  width: 3px; border-radius: 0 2px 2px 0;
+  background: #60a5fa;
+  transform: scaleY(0);
+  transition: transform .18s ease;
+}
+.nav-item.active::before { transform: scaleY(1); }
+.nav-item.active {
+  background: rgba(59,130,246,.2);
+  color: #93c5fd;
+  font-weight: 700;
+}
+.nav-item:hover:not(.active) { background: rgba(255,255,255,.05); }
+
+/* ───────────────────────────────────────────────────────────
+   PAGE ENTER ANIMATION
+   ─────────────────────────────────────────────────────────── */
+
+.page.active {
+  animation: pageIn .18s ease both;
+}
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────
+   STAT CARDS POLISH
+   ─────────────────────────────────────────────────────────── */
+
+.stat-card {
+  transition: transform .15s, box-shadow .15s;
+  position: relative; overflow: hidden;
+}
+.stat-card::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.stat-card.info::after { background: linear-gradient(90deg,#60a5fa,#3b82f6); }
+.stat-card.ok::after   { background: linear-gradient(90deg,#34d399,#059669); }
+.stat-card.warn::after { background: linear-gradient(90deg,#fbbf24,#d97706); }
+.stat-card.bad::after  { background: linear-gradient(90deg,#f87171,#dc2626); }
+.stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.09); }
+
+/* ───────────────────────────────────────────────────────────
+   BUTTON POLISH
+   ─────────────────────────────────────────────────────────── */
+
+.btn {
+  transition: background .12s, border-color .12s, color .12s,
+              transform .1s, box-shadow .12s;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0,0,0,.1);
+}
+.btn:active:not(:disabled) { transform: none; box-shadow: none; }
+
+.btn.primary {
+  background: linear-gradient(135deg,#3b82f6,#2563eb);
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(37,99,235,.3);
+}
+.btn.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg,#60a5fa,#3b82f6);
+  box-shadow: 0 4px 12px rgba(37,99,235,.4);
+}
+
+/* Thin scrollbar */
+.table-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+.table-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+nav::-webkit-scrollbar { width: 4px; }
+nav::-webkit-scrollbar-thumb { background: #243550; border-radius: 99px; }
+</style>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   INTERACTIVITY — toast, confirm, counters, sessions render
+═══════════════════════════════════════════════════════════ */
+
+// ── Toast ────────────────────────────────────────────────────
+window.toast = function(msg, type='info', ms=4000) {
+  const icons = {ok:'✓', bad:'✕', warn:'⚠', info:'ℹ'};
+  let c = document.getElementById('toastContainer');
+  if (!c) { c = document.createElement('div'); c.id='toastContainer'; document.body.appendChild(c); }
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.innerHTML = `<span class="toast-icon">${icons[type]||'ℹ'}</span><span class="toast-body">${msg}</span><span class="toast-close">✕</span>`;
+  const dismiss = () => { t.style.opacity='0'; t.style.transform='translateX(16px)'; t.style.transition='.2s'; setTimeout(()=>t.remove(),200); };
+  t.querySelector('.toast-close').onclick = dismiss;
+  c.appendChild(t);
+  if (ms > 0) setTimeout(dismiss, ms);
+};
+
+// Override alert
+window.alert = (msg) => {
+  const type = /ошибк|error|fail|не удал|✗/i.test(msg) ? 'bad'
+             : /сохран|ok|✓|успеш|создан|добавл|удал|sync|push/i.test(msg) ? 'ok'
+             : /внимани|предупреж/i.test(msg) ? 'warn' : 'info';
+  toast(msg, type);
+};
+
+// ── Custom confirm ────────────────────────────────────────────
+window.customConfirm = function(msg, title='Подтверждение') {
+  return new Promise(resolve => {
+    let settled = false;
+    const bg = document.getElementById('confirmBg');
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMsg').textContent = msg;
+    bg.classList.add('open');
+    const finish = (val) => { if (settled) return; settled=true; bg.classList.remove('open'); resolve(val); };
+    document.getElementById('confirmOk').onclick     = () => finish(true);
+    document.getElementById('confirmCancel').onclick = () => finish(false);
+    bg.onclick = (e) => { if (e.target === bg) finish(false); };
+  });
+};
+
+// Replace native confirm
+window._nc = window.confirm;
+window.confirm = () => false; // sync calls get false; async pattern used everywhere
+
+// ── withLoading ───────────────────────────────────────────────
+window.withLoading = async function(btnId, fn) {
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.classList.add('loading'); btn.disabled = true; }
+  try { await fn(); }
+  catch (e) { toast(e?.message || String(e), 'bad'); }
+  finally { if (btn) { btn.classList.remove('loading'); btn.disabled = false; } }
+};
+
+// ── deleteUser/Profile/Policy with custom confirm ─────────────
+window.deleteUser = async (username) => {
+  if (!await customConfirm(`Удалить пользователя «${username}»?`, 'Удалить')) return;
+  await jpost('/api/admin/users/delete', { username });
+  await loadAll(); toast(`Пользователь ${username} удалён`, 'ok');
+};
+window.deleteProfile = async (name) => {
+  if (!await customConfirm(`Удалить профиль «${name}»?`, 'Удалить')) return;
+  await jpost('/api/admin/profiles/delete', { name });
+  await loadAll(); toast(`Профиль ${name} удалён`, 'ok');
+};
+window.deletePolicy = async (id) => {
+  if (!await customConfirm(`Удалить политику «${id}»?`, 'Удалить')) return;
+  await jpost('/api/admin/app-policies/delete', { id });
+  await loadPolicies(); renderPolicies(); toast(`Политика ${id} удалена`, 'ok');
+};
+
+// ── Sessions page render ──────────────────────────────────────
+window.renderSessionsPage = function() {
+  const tbody = document.getElementById('sessionRows');
+  if (!tbody) return;
+  const rows = typeof mergedRows === 'function' ? mergedRows() : [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🔗</div><p>Нет данных</p></div></td></tr>';
+    return;
+  }
+  const e = window.esc || (v=>String(v??''));
+  const fd = window.fmtDate || (v=>v?new Date(v).toLocaleString():'—');
+  tbody.innerHTML = rows.map(r => {
+    const acct = r.enabled
+      ? `<span class="stateDot stateOn"  title="Учётка включена">✓</span>`
+      : `<span class="stateDot stateBad" title="Учётка выключена">✕</span>`;
+    const sess = r.connected
+      ? `<span class="stateDot stateOn"   title="Agent session активна">A</span>`
+      : r.policy_blocked
+        ? `<span class="stateDot stateBad"  title="Заблокирован: ${e(r.policy_name||'')}">A</span>`
+        : `<span class="stateDot stateOff"  title="Session неактивна">A</span>`;
+    const rt = r.runtime_connected
+      ? `<span class="stateDot stateInfo" title="Runtime tunnel активен">R</span>`
+      : r.connected
+        ? `<span class="stateDot stateWarn" title="Agent есть, runtime нет">R</span>`
+        : `<span class="stateDot stateOff"  title="Runtime неактивен">R</span>`;
+    const rowCls = r.policy_blocked ? ' class="row-blocked"' : r.connected||r.runtime_connected ? ' class="row-active"' : '';
+    return `<tr${rowCls}>
+      <td class="statusCell"><div class="statusIcons">${acct}${sess}${rt}</div></td>
+      <td>
+        <div style="font-weight:600;font-size:13px">${e(r.username)}</div>
+        <div style="font-size:11px;color:#64748b;margin-top:1px">${e(r.profile||'—')}</div>
+      </td>
+      <td>
+        <div class="mono" style="font-size:12px">${e(r.ip||'—')}</div>
+        <div class="mono" style="font-size:11px;color:#94a3b8">${e(r.mac||'—')}</div>
+      </td>
+      <td style="font-size:12px">${e(r.os_name||'—')} <span style="color:#94a3b8">${e(r.os_version||'')}</span></td>
+      <td style="font-size:12px;color:#475569">${fd(r.connected_at)}</td>
+      <td style="font-size:12px;color:#475569">${fd(r.last_seen||r.user_last_seen)}</td>
+      <td>
+        <div class="actions">
+          <button class="iconBtn" data-action="info"     data-user="${e(r.username)}" title="Сводная информация">ℹ️</button>
+          <button class="iconBtn" data-action="roadmap"  data-user="${e(r.username)}" title="История сессий">🧭</button>
+          <button class="iconBtn" data-action="apps"     data-user="${e(r.username)}" title="Приложения">🖥️</button>
+          <button class="iconBtn" data-action="menu"     data-user="${e(r.username)}" data-enabled="${r.enabled?'true':'false'}" title="Действия">⋯</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  // click row = open info
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      const u = tr.querySelector('[data-action=info]')?.dataset.user;
+      if (u && typeof openInfo==='function') openInfo(u);
+    });
+  });
+};
+
+// ── Navigation ────────────────────────────────────────────────
+const PAGE_TITLES = {
+  dashboard:'Дашборд', users:'Пользователи', sessions:'Сессии',
+  profiles:'VPN профили', policies:'Политики приложений',
+  radius:'RADIUS', settings:'Настройки TLS', smtp:'Email / 2FA'
+};
+window.showPage = function(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id==='page-'+name));
+  document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page===name));
+  const t = document.getElementById('pageTitle');
+  if (t) t.textContent = PAGE_TITLES[name]||name;
+  sessionStorage.setItem('ztna_page', name);
+  if (name==='dashboard' && typeof renderDashboard==='function') renderDashboard();
+  if (name==='sessions')  renderSessionsPage();
+  // restart page animation
+  const pg = document.getElementById('page-'+name);
+  if (pg) { pg.style.animation='none'; pg.offsetHeight; pg.style.animation=''; }
+};
+document.querySelectorAll('.nav-item[data-page]').forEach(btn =>
+  btn.addEventListener('click', () => showPage(btn.dataset.page))
+);
+const saved = sessionStorage.getItem('ztna_page');
+if (saved && document.getElementById('page-'+saved)) showPage(saved);
+
+// ── Dashboard ─────────────────────────────────────────────────
+window.renderDashboard = function() {
+  const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+  if (typeof users    !=='undefined') { s('kpiUsers',users.length); s('kpiUsersMeta',`включено: ${users.filter(u=>u.enabled).length}`); }
+  if (typeof sessions !=='undefined') { s('kpiSessions',sessions.filter(x=>x.connected).length); s('kpiSessionsMeta',`заблокировано: ${sessions.filter(x=>x.policy_blocked).length}`); }
+  if (typeof profiles !=='undefined') { s('kpiProfiles',profiles.length); s('kpiProfilesMeta',`full: ${profiles.filter(p=>p.full_tunnel).length} / split: ${profiles.filter(p=>!p.full_tunnel).length}`); }
+  if (typeof runtimeData!=='undefined'&&runtimeData) { const t=runtimeData.tunnels||[]; s('kpiTunnels',t.filter(x=>x.running).length); s('kpiTunnelsMeta',`всего туннелей: ${t.length}`); }
+};
+
+// ── renderHealth hook ─────────────────────────────────────────
+const _rh = window.renderHealth;
+window.renderHealth = function() {
+  if (_rh) _rh();
+  const ok = typeof healthData!=='undefined' && !!healthData?.ok;
+  const pill = document.getElementById('healthPill');
+  const txt  = document.getElementById('healthPillText');
+  if (pill) pill.className = 'sidebar-health '+(ok?'ok':'bad');
+  if (txt)  txt.textContent = ok ? 'Agent доступен' : 'Agent недоступен';
+  if (typeof users    !=='undefined') { const el=document.getElementById('badgeUsers'); if(el) el.textContent=users.length; }
+  if (typeof sessions !=='undefined') { const el=document.getElementById('badgeSessions'); if(el) el.textContent=sessions.filter(s=>s.connected||s.runtime_connected).length; }
+  renderDashboard();
+  if (document.getElementById('page-sessions')?.classList.contains('active')) renderSessionsPage();
+};
+
+// ── Buttons: refresh/sync with loading ────────────────────────
+['btnRefresh','btnRefreshSessions','btnRefreshDash','btnSyncVPN',
+ 'btnRefreshProfiles','btnRefreshPolicies','btnRefreshSources','btnRefreshGroupMappings']
+.forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('click', () => withLoading(id, loadAll));
+});
+
+document.getElementById('btnRefreshSessions')?.addEventListener('click',
+  () => withLoading('btnRefreshSessions', async () => { await loadAll(); renderSessionsPage(); })
+);
+
+// ── Table search ──────────────────────────────────────────────
+['usersSearch:rows','sessionsSearch:sessionRows'].forEach(pair => {
+  const [sid, tid] = pair.split(':');
+  const inp = document.getElementById(sid);
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    const q = inp.value.toLowerCase();
+    document.querySelectorAll(`#${tid} tr`).forEach(tr =>
+      tr.classList.toggle('row-hidden', q!=='' && !tr.textContent.toLowerCase().includes(q))
+    );
+  });
+});
+
+// ── Keyboard ──────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key!=='Escape') return;
+  if (typeof closeInfo==='function') closeInfo();
+  document.getElementById('confirmBg')?.classList.remove('open');
+  ['profileBg','policyBg','certBg','appsBg','roadmapBg','sourceBg'].forEach(id => {
+    const el=document.getElementById(id);
+    if (el?.style.display==='flex') el.style.display='none';
+  });
+});
+
+// ── Profile modal close alias ─────────────────────────────────
+document.getElementById('btnCloseProfileModal2')?.addEventListener('click',
+  () => document.getElementById('profileBg').style.display='none');
+document.getElementById('btnClosePolicyModal2')?.addEventListener('click',
+  () => document.getElementById('policyBg').style.display='none');
+
+// ── Info drawer ───────────────────────────────────────────────
+document.getElementById('infoBgOverlay')?.addEventListener('click', () => {
+  if (typeof closeInfo==='function') closeInfo();
+});
+
+// ── Auto-refresh dot indicator ────────────────────────────────
+const dot = Object.assign(document.createElement('div'), {
+  style: 'position:fixed;bottom:20px;left:calc(var(--sidebar-w,220px)+14px);width:6px;height:6px;border-radius:50%;background:#cbd5e1;transition:background .3s;z-index:99;pointer-events:none'
+});
+document.body.appendChild(dot);
+const _la = window.loadAll;
+window.loadAll = async function() {
+  dot.style.background='#60a5fa';
+  try { if(_la) await _la(); dot.style.background='#34d399'; }
+  catch(e) { dot.style.background='#f87171'; }
+  setTimeout(()=>dot.style.background='#cbd5e1',1400);
+};
+
+// ── Mobile: always show actions ───────────────────────────────
+if (window.matchMedia('(max-width:768px)').matches) {
+  document.querySelectorAll('.actions').forEach(a=>{a.style.opacity='1';a.style.transform='none';});
+}
+</script>
+
 </body>
 </html>

@@ -39,11 +39,14 @@ func loadSnapshot(ctx context.Context, db *sql.DB, src model.Source) (*model.Sna
 
 	snap.Diagnostics.UserCount = len(snap.Users)
 	snap.Diagnostics.GroupCount = len(snap.Groups)
-	hash, err := snapshotHash(snap)
+
+	// Hash only stable content (not CreatedAt which changes every run).
+	hash, err := snapshotContentHash(snap)
 	if err != nil {
 		return nil, err
 	}
 	snap.Diagnostics.Hash = hash
+	// Use the content hash as revision so identical data never creates a new row.
 	snap.Revision = hash
 	return snap, nil
 }
@@ -54,7 +57,6 @@ func loadUserAttrs(ctx context.Context, db *sql.DB, query string, snap *model.Sn
 		return err
 	}
 	defer rows.Close()
-
 	for rows.Next() {
 		var username, attr, op, value string
 		if err := rows.Scan(&username, &attr, &op, &value); err != nil {
@@ -78,7 +80,6 @@ func loadGroupAttrs(ctx context.Context, db *sql.DB, query string, snap *model.S
 		return err
 	}
 	defer rows.Close()
-
 	for rows.Next() {
 		var groupName, attr, op, value string
 		if err := rows.Scan(&groupName, &attr, &op, &value); err != nil {
@@ -102,7 +103,6 @@ func loadUserGroups(ctx context.Context, db *sql.DB, snap *model.Snapshot) error
 		return err
 	}
 	defer rows.Close()
-
 	type rowItem struct {
 		group string
 		prio  int
@@ -159,8 +159,21 @@ func normalize(v string) string {
 	return strings.TrimSpace(strings.ToLower(v))
 }
 
-func snapshotHash(snap *model.Snapshot) (string, error) {
-	b, err := json.Marshal(snap)
+// snapshotContentHash hashes only the stable data content (users + groups),
+// explicitly excluding CreatedAt which changes every run. This means identical
+// RADIUS data produces the same revision hash and avoids unbounded table growth.
+func snapshotContentHash(snap *model.Snapshot) (string, error) {
+	type stableSnapshot struct {
+		SourceID string                          `json:"source_id"`
+		Users    map[string]*model.RadiusUser    `json:"users"`
+		Groups   map[string]*model.RadiusGroup   `json:"groups"`
+	}
+	stable := stableSnapshot{
+		SourceID: snap.SourceID,
+		Users:    snap.Users,
+		Groups:   snap.Groups,
+	}
+	b, err := json.Marshal(stable)
 	if err != nil {
 		return "", err
 	}
